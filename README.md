@@ -33,6 +33,20 @@ pnpm dev
 
 Open http://localhost:3000 and create your first account. For production serving, HTTPS, and PWA install, see [docs/self-hosting.md](docs/self-hosting.md).
 
+## Run the Docker image
+
+Every tagged release publishes a prebuilt image to `ghcr.io/darticusmaximus/home-pantry`, with both `1.0.0`-style version tags and `latest`. Point it at your own Appwrite:
+
+```bash
+docker run -d -p 3000:3000 \
+  -e NEXT_PUBLIC_APPWRITE_ENDPOINT=https://your-appwrite.example/v1 \
+  -e NEXT_PUBLIC_APPWRITE_PROJECT_ID=your-project-id \
+  -e AI_API_KEY=your-provider-key \
+  ghcr.io/darticusmaximus/home-pantry:latest
+```
+
+`AI_API_KEY` is optional — without it, AI parsing is off and the rest of the app works. The Appwrite values are injected at container start, so no rebuild is needed. You still need the Appwrite project and schema once; see [docs/self-hosting.md](docs/self-hosting.md) for the full runbook, including docker-compose.
+
 ## Environment variables
 
 Copy `.env.example` to `.env.local` and replace the placeholders. Never commit a real API key.

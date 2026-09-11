@@ -83,3 +83,40 @@ pantry.example.com {
 Set `NEXT_PUBLIC_APP_URL` to the public HTTPS origin so PWA metadata points at the right place, and keep `NEXT_PUBLIC_APPWRITE_ENDPOINT` on HTTPS as well.
 
 Once the site is served over HTTPS, use your browser's Add to Home Screen / Install action — Home Pantry then runs full-screen and offline-capable like a native app.
+
+## 8. Run the Docker image
+
+Every tagged release publishes a prebuilt image to `ghcr.io/darticusmaximus/home-pantry`, with both `1.0.0`-style version tags and `latest`. The image replaces the `pnpm build` / `pnpm start` step above — you still need the Appwrite project from section 2, and the schema from `pnpm setup` / `pnpm seed` run once from a checkout (section 3).
+
+```bash
+docker run -d -p 3000:3000 \
+  -e NEXT_PUBLIC_APPWRITE_ENDPOINT=https://your-appwrite.example/v1 \
+  -e NEXT_PUBLIC_APPWRITE_PROJECT_ID=your-project-id \
+  -e AI_API_KEY=your-provider-key \
+  ghcr.io/darticusmaximus/home-pantry:latest
+```
+
+The runtime environment:
+
+- `NEXT_PUBLIC_APPWRITE_ENDPOINT` — your Appwrite endpoint, including the `/v1` suffix
+- `NEXT_PUBLIC_APPWRITE_PROJECT_ID` — the project ID from section 2
+- `AI_API_KEY` — optional, server-side only; the other `AI_*` variables from section 5 work the same way
+
+Both `NEXT_PUBLIC_*` values are injected at container start by the image's entrypoint, so pointing the image at a different Appwrite needs no rebuild — just restart with new environment variables.
+
+Or with a `docker-compose.yml`:
+
+```yaml
+services:
+  pantry:
+    image: ghcr.io/darticusmaximus/home-pantry:latest
+    ports:
+      - '3000:3000'
+    environment:
+      NEXT_PUBLIC_APPWRITE_ENDPOINT: https://your-appwrite.example/v1
+      NEXT_PUBLIC_APPWRITE_PROJECT_ID: your-project-id
+      AI_API_KEY: your-provider-key
+    restart: unless-stopped
+```
+
+The HTTPS rules from section 7 apply unchanged: the app sets HSTS and the PWA's service worker needs a trustworthy origin. Put the container behind a reverse proxy that terminates TLS — reuse the same Caddy/nginx setup — and only expose the proxy.
