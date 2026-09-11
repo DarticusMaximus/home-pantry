@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary-50: oklch(0.971 0.013 142.5);
+  --color-primary-100: oklch(0.962 0.044 156.7);
+  --color-primary-200: oklch(0.925 0.084 155.9);
+  --color-primary-300: oklch(0.871 0.15 154.4);
+  --color-primary-400: oklch(0.792 0.209 151.7);
+  --color-primary-500: oklch(0.696 0.17 162.5);
+  --color-primary-600: oklch(0.596 0.145 163.2);
+  --color-primary-700: oklch(0.508 0.118 165.6);
+  --color-primary-800: oklch(0.432 0.095 166.9);
+  --color-primary-900: oklch(0.381 0.083 172.4);
+  --color-primary-950: oklch(0.262 0.078 172.5);
+  --animate-shimmer: shimmer 1.2s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+
+:focus-visible {
+  outline: 2px solid oklch(0.696 0.17 162.5);
+  outline-offset: 2px;
+}
+
+/* Subtle motion utilities — per UI-SPEC Phase 08 */
+.motion-control {
+  transition-duration: 120ms;
+  transition-property: color, background-color, opacity;
+  transition-timing-function: ease-out;
+}
+
+.motion-reveal {
+  transition-duration: 180ms;
+  transition-property: opacity, transform;
+  transition-timing-function: ease-out;
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pb-shell {
+  padding-bottom: calc(9rem + env(safe-area-inset-bottom, 0px));
+}
+.pb-confirm {
+  padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
+}
+.pb-confirm-bar {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}

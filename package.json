@@ -1,0 +1,53 @@
+{
+  "name": "home-pantry",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "seed": "tsx scripts/seed.ts",
+    "setup": "tsx scripts/setup-appwrite.ts"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "appwrite": "^18.1.1",
+    "fuse.js": "^7.3.0",
+    "lucide-react": "^0.574.0",
+    "next": "^15.4.8",
+    "openai": "^6.34.0",
+    "react": "^19.1.2",
+    "react-dom": "^19.1.2",
+    "react-hook-form": "^7.71.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@ducanh2912/next-pwa": "^10.2.9",
+    "@playwright/test": "^1.45.0",
+    "@tailwindcss/postcss": "^4.1.11",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.0.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "@vitest/coverage-v8": "2.1.9",
+    "dotenv": "^17.3.1",
+    "jsdom": "^28.1.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.11",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.9",
+    "zod": "^3.23.0"
+  },
+  "packageManager": "pnpm@11.24.0"
+}

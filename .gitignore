@@ -1,0 +1,62 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+/coverage
+*.log
+/playwright-report
+/test-results
+
+# next.js
+/.next/
+/out/
+
+# Opencode
+/.opencode/
+opencode.json
+
+# local-only project memory
+.ssc/
+AGENTS.md
+
+# Codegraph local index
+.codegraph/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+.idea
+*.bundle
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+scripts/sweep-markers.local.txt
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# pwa generated files
+/public/sw.js
+/public/sw.js.map
+/public/workbox-*.js
+/public/workbox-*.js.map
+
