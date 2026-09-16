@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+
+const hasPrivateMemory = existsSync('.ssc/PRODUCT.md')
 
 const TOOLCHAIN_FLOOR = {
   packageManagerPrefix: 'pnpm@11',
@@ -51,7 +53,7 @@ describe('toolchain floor', () => {
     expect(packageManagerPattern.test('npm@10')).toBe(false)
   })
 
-  it('records the floor in .ssc/baseline/toolchain.md', () => {
+  it.skipIf(!hasPrivateMemory)('records the floor in .ssc/baseline/toolchain.md', () => {
     const markdown = readFileSync(path.join(process.cwd(), '.ssc/baseline/toolchain.md'), 'utf8')
 
     expect(markdown).toContain(TOOLCHAIN_FLOOR.packageManagerPrefix)

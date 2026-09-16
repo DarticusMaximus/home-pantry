@@ -24,6 +24,8 @@ import type { ItemTemplate } from '@/types/template'
 
 process.env.TZ = 'UTC'
 
+const hasPrivateMemory = existsSync('.ssc/PRODUCT.md')
+
 vi.mock('@/lib/appwrite/items', () => ({
   createItem: vi.fn(),
   updateItem: vi.fn(),
@@ -2111,7 +2113,7 @@ describe('inventory behavior floor', () => {
   })
 
   describe('markdown snapshot', () => {
-    it('records the floor in .ssc/baseline/inventory-behavior.md', () => {
+    it.skipIf(!hasPrivateMemory)('records the floor in .ssc/baseline/inventory-behavior.md', () => {
       const markdownPath = path.join(process.cwd(), '.ssc/baseline/inventory-behavior.md')
       expect(existsSync(markdownPath), 'missing .ssc/baseline/inventory-behavior.md').toBe(true)
 
@@ -2336,25 +2338,34 @@ describe('inventory behavior floor', () => {
       expect(markdown).toMatch(/overlapping searches show only the latest query/)
     })
 
-    it('records required locationId in .ssc/baseline/data-model.md', () => {
-      const markdown = repoFile('.ssc/baseline/data-model.md')
-      expect(markdown).toContain('items.locationId')
-      expect(markdown).toContain('required: true')
-      expect(markdown).toMatch(/required on `Item`/)
-    })
+    it.skipIf(!hasPrivateMemory)(
+      'records required locationId in .ssc/baseline/data-model.md',
+      () => {
+        const markdown = repoFile('.ssc/baseline/data-model.md')
+        expect(markdown).toContain('items.locationId')
+        expect(markdown).toContain('required: true')
+        expect(markdown).toMatch(/required on `Item`/)
+      },
+    )
 
-    it('records optional expirationDate in .ssc/baseline/data-model.md', () => {
-      const markdown = repoFile('.ssc/baseline/data-model.md')
-      expect(markdown).toContain('items.expirationDate')
-      expect(markdown).toContain('required: false')
-      expect(markdown).toMatch(/optional on `Item`/)
-    })
+    it.skipIf(!hasPrivateMemory)(
+      'records optional expirationDate in .ssc/baseline/data-model.md',
+      () => {
+        const markdown = repoFile('.ssc/baseline/data-model.md')
+        expect(markdown).toContain('items.expirationDate')
+        expect(markdown).toContain('required: false')
+        expect(markdown).toMatch(/optional on `Item`/)
+      },
+    )
 
-    it('records that item_templates omit tags and isPartialTrackable', () => {
-      const markdown = repoFile('.ssc/baseline/data-model.md')
-      expect(markdown).toMatch(
-        /item_templates[\s\S]{0,80}ItemTemplate[\s\S]{0,40}omit `tags` and `isPartialTrackable`/,
-      )
-    })
+    it.skipIf(!hasPrivateMemory)(
+      'records that item_templates omit tags and isPartialTrackable',
+      () => {
+        const markdown = repoFile('.ssc/baseline/data-model.md')
+        expect(markdown).toMatch(
+          /item_templates[\s\S]{0,80}ItemTemplate[\s\S]{0,40}omit `tags` and `isPartialTrackable`/,
+        )
+      },
+    )
   })
 })

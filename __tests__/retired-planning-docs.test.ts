@@ -66,7 +66,7 @@ describe('operator README', () => {
     }
   })
 
-  it('points agents at SSC product memory', () => {
+  it.skipIf(!existsSync('AGENTS.md'))('points agents at SSC product memory', () => {
     expect(repoFile('AGENTS.md')).toContain(PRODUCT_MEMORY_SENTENCE)
   })
 

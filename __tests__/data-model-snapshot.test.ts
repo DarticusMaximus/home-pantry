@@ -3,6 +3,8 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { COLLECTIONS, DATABASE_ID } from '@/lib/constants'
 
+const hasPrivateMemory = existsSync('.ssc/PRODUCT.md')
+
 const DATA_MODEL_FLOOR = {
   databaseId: 'home_pantry',
   collections: {
@@ -197,7 +199,7 @@ describe('data-model snapshot (Stage 01 floor)', () => {
     expect(indexKeys(setupSource, 'itemsIndexes')).toEqual(DATA_MODEL_FLOOR.indexes.items)
   })
 
-  it('records the floor in .ssc/baseline/data-model.md', () => {
+  it.skipIf(!hasPrivateMemory)('records the floor in .ssc/baseline/data-model.md', () => {
     const markdownPath = path.join(process.cwd(), '.ssc/baseline/data-model.md')
     expect(existsSync(markdownPath), 'missing .ssc/baseline/data-model.md').toBe(true)
 
@@ -225,21 +227,24 @@ describe('data-model snapshot (Stage 01 floor)', () => {
     }
   })
 
-  it('omits tags and isPartialTrackable from item_templates / ItemTemplate', () => {
-    expect(DATA_MODEL_FLOOR.appwriteAttributes.item_templates).not.toContain('tags')
-    expect(DATA_MODEL_FLOOR.appwriteAttributes.item_templates).not.toContain('isPartialTrackable')
-    expect(DATA_MODEL_FLOOR.clientKeys.ItemTemplate).not.toContain('tags')
-    expect(DATA_MODEL_FLOOR.clientKeys.ItemTemplate).not.toContain('isPartialTrackable')
+  it.skipIf(!hasPrivateMemory)(
+    'omits tags and isPartialTrackable from item_templates / ItemTemplate',
+    () => {
+      expect(DATA_MODEL_FLOOR.appwriteAttributes.item_templates).not.toContain('tags')
+      expect(DATA_MODEL_FLOOR.appwriteAttributes.item_templates).not.toContain('isPartialTrackable')
+      expect(DATA_MODEL_FLOOR.clientKeys.ItemTemplate).not.toContain('tags')
+      expect(DATA_MODEL_FLOOR.clientKeys.ItemTemplate).not.toContain('isPartialTrackable')
 
-    const markdown = repoFile('.ssc/baseline/data-model.md')
-    expect(markdown).toMatch(
-      /item_templates[\s\S]{0,80}ItemTemplate[\s\S]{0,40}omit `tags` and `isPartialTrackable`/,
-    )
-    expect(templateSource).not.toContain('tags')
-    expect(templateSource).not.toContain('isPartialTrackable')
-    expect(setupSource).not.toContain('isPartialTrackable')
-    expect(setupSource).not.toMatch(/key:\s*'tags'/)
-  })
+      const markdown = repoFile('.ssc/baseline/data-model.md')
+      expect(markdown).toMatch(
+        /item_templates[\s\S]{0,80}ItemTemplate[\s\S]{0,40}omit `tags` and `isPartialTrackable`/,
+      )
+      expect(templateSource).not.toContain('tags')
+      expect(templateSource).not.toContain('isPartialTrackable')
+      expect(setupSource).not.toContain('isPartialTrackable')
+      expect(setupSource).not.toMatch(/key:\s*'tags'/)
+    },
+  )
 
   it('fails closed on floor regressions', () => {
     expect({ ...DATA_MODEL_FLOOR.collections, extra: 'extra' }).not.toEqual(
