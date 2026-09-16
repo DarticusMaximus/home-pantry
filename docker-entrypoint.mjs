@@ -40,6 +40,28 @@ export function rewriteFile(file, replacements) {
   return true
 }
 
+export function shouldProvision(env) {
+  return Boolean(env?.APPWRITE_API_KEY)
+}
+
+export function buildChildEnv(env) {
+  const child = { ...env }
+  delete child.APPWRITE_API_KEY
+  return child
+}
+
+function scrubSecret(message, secret) {
+  if (typeof secret !== 'string' || secret.length === 0) {
+    return message
+  }
+  return message.split(secret).join('[redacted]')
+}
+
+function describeError(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  return scrubSecret(message, process.env.APPWRITE_API_KEY)
+}
+
 function collectFiles(dir) {
   if (!existsSync(dir)) {
     return []
@@ -56,16 +78,38 @@ function collectFiles(dir) {
   return files
 }
 
-function main() {
+export async function main({
+  provision: runProvision,
+  spawn: spawnChild = spawn,
+  exit = (code) => {
+    process.exit(code)
+  },
+  root = path.dirname(fileURLToPath(import.meta.url)),
+} = {}) {
   let replacements
   try {
     replacements = buildReplacements(process.env)
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
-    process.exit(1)
+    exit(1)
+    return
   }
 
-  const root = path.dirname(fileURLToPath(import.meta.url))
+  if (shouldProvision(process.env)) {
+    try {
+      if (typeof runProvision === 'function') {
+        await runProvision()
+      } else {
+        const module = await import(pathToFileURL(path.join(root, 'provision.mjs')).href)
+        await module.provision()
+      }
+    } catch (error) {
+      console.error(describeError(error))
+      exit(1)
+      return
+    }
+  }
+
   const targets = [
     ...collectFiles(path.join(root, '.next', 'static')),
     ...collectFiles(path.join(root, '.next', 'server')),
@@ -82,13 +126,17 @@ function main() {
   }
   console.log(`Entrypoint rewrote ${changed} files`)
 
-  const child = spawn('node', ['server.js'], { stdio: 'inherit', cwd: root })
+  const child = spawnChild('node', ['server.js'], {
+    stdio: 'inherit',
+    cwd: root,
+    env: buildChildEnv(process.env),
+  })
   child.on('error', (error) => {
     console.error(error)
-    process.exit(1)
+    exit(1)
   })
   child.on('exit', (code) => {
-    process.exit(code ?? 1)
+    exit(code ?? 1)
   })
 }
 
@@ -96,5 +144,8 @@ const invokedAsScript =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (invokedAsScript) {
-  main()
+  main().catch((error) => {
+    console.error(describeError(error))
+    process.exit(1)
+  })
 }

@@ -30,6 +30,18 @@ function extractMarkdownSection(source: string, heading: string): string {
   return next === -1 ? after : after.slice(0, next)
 }
 
+function extractJobBlock(source: string, job: string): string {
+  const start = source.match(new RegExp(`^ {2}${job}:`, 'm'))
+  if (!start || start.index === undefined) return ''
+  const lines = source.slice(start.index).split('\n')
+  const block: string[] = []
+  for (const line of lines.slice(1)) {
+    if (line !== '' && !line.startsWith('    ')) break
+    block.push(line)
+  }
+  return block.join('\n')
+}
+
 function extractStepBlock(source: string, marker: string): string {
   const start = source.indexOf(marker)
   expect(start).toBeGreaterThan(-1)
@@ -122,6 +134,31 @@ describe('release assets', () => {
       expect(dockerfile).toContain('USER node')
       expect(dockerfile).toContain('EXPOSE 3000')
       expect(dockerfile).toContain('ENTRYPOINT ["node", "docker-entrypoint.mjs"]')
+    })
+
+    it('bundles provision.mjs from scripts/provision.ts after the Next build', async () => {
+      const dockerfile = await readRepoFile('Dockerfile')
+      const build = dockerfile.indexOf('pnpm build')
+      const bundle = dockerfile.indexOf('esbuild')
+
+      expect(build).toBeGreaterThan(-1)
+      expect(bundle).toBeGreaterThan(build)
+      expect(dockerfile).toContain('scripts/provision.ts')
+      expect(dockerfile).toContain('--bundle')
+      expect(dockerfile).toContain('--platform=node')
+      expect(dockerfile).toContain('--format=esm')
+      expect(dockerfile).toMatch(/esbuild[^\n]*provision\.mjs/)
+    })
+
+    it('copies provision.mjs from the builder beside the entrypoint', async () => {
+      const dockerfile = await readRepoFile('Dockerfile')
+
+      expect(dockerfile).toContain(
+        'COPY --from=builder --chown=node:node /app/provision.mjs ./provision.mjs',
+      )
+      expect(dockerfile).toContain(
+        'COPY --chown=node:node docker-entrypoint.mjs ./docker-entrypoint.mjs',
+      )
     })
   })
 
@@ -240,6 +277,19 @@ describe('release assets', () => {
       expect(release).toContain('See docs/self-hosting.md for the full runbook.')
     })
 
+    it('states container self-provisioning and optional AI key in the release notes', async () => {
+      const workflow = await readRepoFile('.github/workflows/release.yml')
+      const release = extractStepBlock(workflow, 'gh release create')
+
+      expect(release).toContain('APPWRITE_API_KEY')
+      expect(release).toContain('databases-scoped API key')
+      expect(release).toContain('provisions the database')
+      expect(release).toContain('removes the key')
+      expect(release).toContain('no repo checkout needed')
+      expect(release).toContain('AI_API_KEY is optional')
+      expect(release).toContain('docs/self-hosting.md')
+    })
+
     it('references no secret other than GITHUB_TOKEN', async () => {
       const workflow = await readRepoFile('.github/workflows/release.yml')
       const secretRefs = workflow.match(/secrets\.[A-Za-z_]+/g) ?? []
@@ -247,10 +297,69 @@ describe('release assets', () => {
       expect(secretRefs).toEqual(['secrets.GITHUB_TOKEN'])
     })
 
+    it('runs a verify job with the full check floor before release', async () => {
+      const workflow = await readRepoFile('.github/workflows/release.yml')
+      const verify = extractJobBlock(workflow, 'verify')
+
+      expect(verify).toContain('pnpm install --frozen-lockfile')
+      expect(verify).toContain('pnpm typecheck')
+      expect(verify).toContain('pnpm lint')
+      expect(verify).toContain('pnpm test')
+      expect(verify).toContain('pnpm sweep')
+    })
+
+    it('makes the release job depend on verify', async () => {
+      const workflow = await readRepoFile('.github/workflows/release.yml')
+      const release = extractJobBlock(workflow, 'release')
+
+      expect(release).toContain('needs: verify')
+    })
+
     it('uses spaces only for indentation', async () => {
       const workflow = await readRepoFile('.github/workflows/release.yml')
 
       expect(workflow).not.toContain('\t')
+    })
+  })
+
+  describe('.github/workflows/ci.yml', () => {
+    it('exists and triggers on push and pull_request', async () => {
+      const workflow = await readRepoFile('.github/workflows/ci.yml')
+      const trigger = extractTopLevelBlock(workflow, 'on')
+
+      expect(trigger).toContain('push:')
+      expect(trigger).toContain('pull_request:')
+    })
+
+    it('installs frozen and runs typecheck, lint, tests, and the sweep', async () => {
+      const workflow = await readRepoFile('.github/workflows/ci.yml')
+
+      expect(workflow).toContain('pnpm install --frozen-lockfile')
+      expect(workflow).toContain('pnpm typecheck')
+      expect(workflow).toContain('pnpm lint')
+      expect(workflow).toContain('pnpm test')
+      expect(workflow).toContain('pnpm sweep')
+    })
+
+    it('keeps Playwright e2e out of CI', async () => {
+      const workflow = await readRepoFile('.github/workflows/ci.yml')
+
+      expect(workflow).not.toContain('playwright')
+      expect(workflow).not.toContain('test:e2e')
+    })
+
+    it('uses spaces only for indentation', async () => {
+      const workflow = await readRepoFile('.github/workflows/ci.yml')
+
+      expect(workflow).not.toContain('\t')
+    })
+  })
+
+  describe('package.json scripts', () => {
+    it('exposes the public-tree sweep as pnpm sweep', async () => {
+      const pkg = JSON.parse(await readRepoFile('package.json'))
+
+      expect(pkg.scripts.sweep).toBe('tsx scripts/sweep-public-tree.ts')
     })
   })
 

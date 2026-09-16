@@ -1,13 +1,16 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  buildChildEnv,
   buildReplacements,
+  main,
   PLACEHOLDER_ENDPOINT,
   PLACEHOLDER_ORIGIN,
   PLACEHOLDER_PROJECT_ID,
   rewriteFile,
+  shouldProvision,
 } from '../docker-entrypoint.mjs'
 
 type Env = {
@@ -133,6 +136,155 @@ describe('docker-entrypoint', () => {
       expect(
         rewriteFile(missing, buildReplacements(fullEnv('https://pantry.example.test/v1'))),
       ).toBe(false)
+    })
+  })
+
+  describe('shouldProvision', () => {
+    it('is true iff APPWRITE_API_KEY is non-empty', () => {
+      expect(shouldProvision({ APPWRITE_API_KEY: 'key-1' })).toBe(true)
+      expect(shouldProvision({ APPWRITE_API_KEY: '' })).toBe(false)
+      expect(shouldProvision({})).toBe(false)
+      expect(shouldProvision({ APPWRITE_API_KEY: undefined })).toBe(false)
+    })
+  })
+
+  describe('buildChildEnv', () => {
+    it('returns the full env minus APPWRITE_API_KEY', () => {
+      const env = {
+        APPWRITE_API_KEY: 'secret-key',
+        NEXT_PUBLIC_APPWRITE_ENDPOINT: 'https://pantry.example.test/v1',
+        NEXT_PUBLIC_APPWRITE_PROJECT_ID: 'proj-1',
+        NEXT_PUBLIC_APPWRITE_ORIGIN: 'https://pantry.example.test',
+        AI_API_KEY: 'ai-secret',
+        AI_BASE_URL: 'https://ai.example.test',
+        PATH: '/usr/bin',
+        NODE_ENV: 'production',
+      }
+
+      expect(buildChildEnv(env)).toEqual({
+        NEXT_PUBLIC_APPWRITE_ENDPOINT: 'https://pantry.example.test/v1',
+        NEXT_PUBLIC_APPWRITE_PROJECT_ID: 'proj-1',
+        NEXT_PUBLIC_APPWRITE_ORIGIN: 'https://pantry.example.test',
+        AI_API_KEY: 'ai-secret',
+        AI_BASE_URL: 'https://ai.example.test',
+        PATH: '/usr/bin',
+        NODE_ENV: 'production',
+      })
+      expect(env.APPWRITE_API_KEY).toBe('secret-key')
+    })
+  })
+
+  describe('main', () => {
+    type OrchestratorDeps = {
+      provision?: () => Promise<unknown>
+      spawn?: (
+        command: string,
+        args: string[],
+        options: { stdio: string; cwd: string; env: NodeJS.ProcessEnv },
+      ) => { on: (...args: unknown[]) => unknown }
+      exit?: (code?: number | null) => void
+      root?: string
+    }
+
+    const runEntrypoint = main as (deps?: OrchestratorDeps) => Promise<void>
+
+    function stubRuntimeEnv(overrides: Record<string, string | undefined> = {}) {
+      vi.stubEnv('NEXT_PUBLIC_APPWRITE_ENDPOINT', 'https://pantry.example.test/v1')
+      vi.stubEnv('NEXT_PUBLIC_APPWRITE_PROJECT_ID', 'proj-1')
+      vi.stubEnv('AI_API_KEY', 'ai-secret')
+      vi.stubEnv('APPWRITE_API_KEY', undefined)
+      for (const [name, value] of Object.entries(overrides)) {
+        vi.stubEnv(name, value)
+      }
+    }
+
+    function fakeChild() {
+      return { on: vi.fn() }
+    }
+
+    beforeEach(() => {
+      stubRuntimeEnv()
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      vi.restoreAllMocks()
+    })
+
+    it('runs provision before spawn when APPWRITE_API_KEY is set', async () => {
+      stubRuntimeEnv({ APPWRITE_API_KEY: 'secret-key' })
+      const order: string[] = []
+      const provision = vi.fn(async () => {
+        order.push('provision')
+      })
+      const spawnFn = vi.fn(() => {
+        order.push('spawn')
+        return fakeChild()
+      })
+      const exit = vi.fn()
+
+      await runEntrypoint({ provision, spawn: spawnFn, exit, root })
+
+      expect(provision).toHaveBeenCalledOnce()
+      expect(spawnFn).toHaveBeenCalledOnce()
+      expect(order).toEqual(['provision', 'spawn'])
+      expect(spawnFn).toHaveBeenCalledWith('node', ['server.js'], {
+        stdio: 'inherit',
+        cwd: root,
+        env: buildChildEnv(process.env),
+      })
+    })
+
+    it('exits 1 and never spawns when provision rejects', async () => {
+      const key = 'super-secret-key-value'
+      stubRuntimeEnv({ APPWRITE_API_KEY: key })
+      const provision = vi.fn(async () => {
+        throw new Error(`unauthorized: ${key}`)
+      })
+      const spawnFn = vi.fn(() => fakeChild())
+      const exit = vi.fn()
+
+      await runEntrypoint({ provision, spawn: spawnFn, exit, root })
+
+      expect(spawnFn).not.toHaveBeenCalled()
+      expect(exit).toHaveBeenCalledWith(1)
+      const logged = vi.mocked(console.error).mock.calls.flat().map(String).join(' ')
+      expect(logged).not.toContain(key)
+      expect(logged.length).toBeGreaterThan(0)
+    })
+
+    it('skips provision and spawns with scrubbed env when the key is absent', async () => {
+      const provision = vi.fn(async () => {})
+      const spawnFn = vi.fn(() => fakeChild())
+      const exit = vi.fn()
+
+      await runEntrypoint({ provision, spawn: spawnFn, exit, root })
+
+      expect(provision).not.toHaveBeenCalled()
+      expect(spawnFn).toHaveBeenCalledOnce()
+      expect(spawnFn).toHaveBeenCalledWith('node', ['server.js'], {
+        stdio: 'inherit',
+        cwd: root,
+        env: buildChildEnv(process.env),
+      })
+    })
+
+    it('fails on a missing endpoint before provisioning', async () => {
+      stubRuntimeEnv({
+        NEXT_PUBLIC_APPWRITE_ENDPOINT: undefined,
+        APPWRITE_API_KEY: 'secret-key',
+      })
+      const provision = vi.fn(async () => {})
+      const spawnFn = vi.fn(() => fakeChild())
+      const exit = vi.fn()
+
+      await runEntrypoint({ provision, spawn: spawnFn, exit, root })
+
+      expect(provision).not.toHaveBeenCalled()
+      expect(spawnFn).not.toHaveBeenCalled()
+      expect(exit).toHaveBeenCalledWith(1)
     })
   })
 })

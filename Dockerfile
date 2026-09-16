@@ -11,6 +11,7 @@ ENV NODE_ENV=production
 ENV NEXT_PUBLIC_APPWRITE_ENDPOINT=https://appwrite.placeholder.invalid/v1
 ENV NEXT_PUBLIC_APPWRITE_PROJECT_ID=placeholder-project-id
 RUN corepack enable && pnpm build
+RUN corepack enable && pnpm exec esbuild scripts/provision.ts --bundle --platform=node --format=esm --outfile=provision.mjs --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
 
 FROM node:22-alpine AS runner
 WORKDIR /app
@@ -19,6 +20,7 @@ COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --chown=node:node docker-entrypoint.mjs ./docker-entrypoint.mjs
+COPY --from=builder --chown=node:node /app/provision.mjs ./provision.mjs
 USER node
 EXPOSE 3000
 ENTRYPOINT ["node", "docker-entrypoint.mjs"]

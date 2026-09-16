@@ -1,4 +1,9 @@
 import { config } from 'dotenv'
+import {
+  APPWRITE_SCRIPT_ENV_VARS,
+  describeResponseError,
+  missingEnvMessage,
+} from './lib/operator-helpers'
 
 config({ path: '.env.local' })
 
@@ -285,19 +290,24 @@ const templates = [
 ]
 
 async function apiCall(path: string, method: string = 'GET', body?: object) {
-  const response = await fetch(`${endpoint}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Appwrite-Project': projectId as string,
-      'X-Appwrite-Key': apiKey as string,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let response: Response
+  try {
+    response = await fetch(`${endpoint}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Appwrite-Project': projectId as string,
+        'X-Appwrite-Key': apiKey as string,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    })
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error))
+  }
 
   if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.message || JSON.stringify(error))
+    throw new Error(await describeResponseError(response))
   }
 
   return response.json()
@@ -331,6 +341,11 @@ async function listAllTemplateDocuments() {
 }
 
 export async function seedTemplates() {
+  const missingEnv = missingEnvMessage(process.env, APPWRITE_SCRIPT_ENV_VARS)
+  if (missingEnv) {
+    throw new Error(missingEnv)
+  }
+
   console.log('\n3. Checking templates...')
 
   // Get all categories to map names to IDs

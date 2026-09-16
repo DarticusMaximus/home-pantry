@@ -215,11 +215,21 @@ describe('sweep-public-tree', () => {
   })
 })
 
-function trackedLegacyPaths(): string[] {
+function trackedLegacyPaths(repoPath: string = process.cwd()): string[] {
   try {
     return execFileSync(
       'git',
-      ['ls-files', '--', 'opencode.json', 'AGENTS.md', '.env', '.env.local', '.ssc'],
+      [
+        '-C',
+        repoPath,
+        'ls-files',
+        '--',
+        'opencode.json',
+        'AGENTS.md',
+        '.env',
+        '.env.local',
+        '.ssc',
+      ],
       { encoding: 'utf8' },
     )
       .split('\n')
@@ -229,8 +239,8 @@ function trackedLegacyPaths(): string[] {
   }
 }
 
+const liveRepoRoot = process.env.SWEEP_LIVE_REPO_ROOT || process.cwd()
 const hasPrivateMemory = existsSync('.ssc/PRODUCT.md')
-const untrackingLanded = trackedLegacyPaths().length === 0
 
 describe('sweep-public-tree live repository state', () => {
   it.skipIf(!hasPrivateMemory)('keeps private product memory on disk', () => {
@@ -238,16 +248,32 @@ describe('sweep-public-tree live repository state', () => {
     expect(statSync('.ssc/PRODUCT.md').size).toBeGreaterThan(0)
   })
 
-  it.skipIf(!hasPrivateMemory || !untrackingLanded)(
-    'keeps the git index free of private files',
-    async () => {
-      const { stdout } = await execFileAsync('git', ['ls-files'])
-      const tracked = stdout.split('\n').filter(Boolean)
-      expect(tracked).not.toContain('opencode.json')
-      expect(tracked).not.toContain('AGENTS.md')
-      expect(tracked).not.toContain('.env')
-      expect(tracked).not.toContain('.env.local')
-      expect(tracked.some((file) => file.startsWith('.ssc/'))).toBe(false)
-    },
-  )
+  it.skipIf(!hasPrivateMemory)('keeps the git index free of private files', async () => {
+    const trackedPrivate = trackedLegacyPaths(liveRepoRoot)
+    expect(
+      trackedPrivate,
+      `private paths are tracked in the git index - untrack them with git rm --cached <path>: ${trackedPrivate.join(', ')}`,
+    ).toEqual([])
+    const { stdout } = await execFileAsync('git', ['-C', liveRepoRoot, 'ls-files'])
+    const tracked = stdout.split('\n').filter(Boolean)
+    expect(tracked).not.toContain('opencode.json')
+    expect(tracked).not.toContain('AGENTS.md')
+    expect(tracked).not.toContain('.env')
+    expect(tracked).not.toContain('.env.local')
+    expect(tracked.some((file) => file.startsWith('.ssc/'))).toBe(false)
+  })
+
+  it('detects a staged private path in a scratch repo fixture', async () => {
+    const scratch = await mkdtemp(path.join(tmpdir(), 'sweep-live-fixture-'))
+    try {
+      await execFileAsync('git', ['-C', scratch, 'init', '--quiet'])
+      await mkdir(path.join(scratch, '.ssc'), { recursive: true })
+      await writeFile(path.join(scratch, '.ssc', 'PRODUCT.md'), '# private memory\n', 'utf8')
+      await writeFile(path.join(scratch, 'AGENTS.md'), '# house rules\n', 'utf8')
+      await execFileAsync('git', ['-C', scratch, 'add', 'AGENTS.md', '.ssc/PRODUCT.md'])
+      expect(trackedLegacyPaths(scratch)).toEqual(['.ssc/PRODUCT.md', 'AGENTS.md'])
+    } finally {
+      await rm(scratch, { recursive: true, force: true })
+    }
+  })
 })

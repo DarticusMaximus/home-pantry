@@ -52,7 +52,10 @@ export function resolveCategory(
 ): string | undefined {
   if (!categoryName || !categoryLookup) return undefined
   const normalized = categoryName.trim().toLowerCase()
-  return categoryLookup.get(normalized)
+  for (const [name, id] of categoryLookup) {
+    if (name.trim().toLowerCase() === normalized) return id
+  }
+  return undefined
 }
 
 export function generateBatchRowId(prefix: string, name: string): string {

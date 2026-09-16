@@ -64,8 +64,16 @@ describe('resolveCategory', () => {
     expect(resolveCategory('Dairy', new Map([['dairy', 'cat-1']]))).toBe('cat-1')
   })
 
-  it('does not lowercase map keys', () => {
-    expect(resolveCategory('Dairy', new Map([['Dairy', 'cat-1']]))).toBeUndefined()
+  it('resolves against a map key with trailing whitespace', () => {
+    expect(resolveCategory('Dairy', new Map([['Dairy ', 'cat-1']]))).toBe('cat-1')
+  })
+
+  it('resolves against an uppercase map key', () => {
+    expect(resolveCategory('Dairy', new Map([['DAIRY', 'cat-1']]))).toBe('cat-1')
+  })
+
+  it('resolves against a map key with surrounding whitespace', () => {
+    expect(resolveCategory('Dairy', new Map([[' dairy ', 'cat-1']]))).toBe('cat-1')
   })
 })
 

@@ -35,17 +35,22 @@ Open http://localhost:3000 and create your first account. For production serving
 
 ## Run the Docker image
 
-Every tagged release publishes a prebuilt image to `ghcr.io/darticusmaximus/home-pantry`, with both `1.0.0`-style version tags and `latest`. Point it at your own Appwrite:
+Every tagged release publishes a prebuilt image to `ghcr.io/darticusmaximus/home-pantry`, with both `1.0.0`-style version tags and `latest`. Create an Appwrite project and a databases-scoped API key, then pass `APPWRITE_API_KEY` to the container at start — the image provisions the database and starter data itself, then removes the key from the app's environment; no checkout is needed.
 
 ```bash
 docker run -d -p 3000:3000 \
   -e NEXT_PUBLIC_APPWRITE_ENDPOINT=https://your-appwrite.example/v1 \
   -e NEXT_PUBLIC_APPWRITE_PROJECT_ID=your-project-id \
+  -e APPWRITE_API_KEY=your-databases-scoped-key \
   -e AI_API_KEY=your-provider-key \
   ghcr.io/darticusmaximus/home-pantry:latest
 ```
 
-`AI_API_KEY` is optional — without it, AI parsing is off and the rest of the app works. The Appwrite values are injected at container start, so no rebuild is needed. You still need the Appwrite project and schema once; see [docs/self-hosting.md](docs/self-hosting.md) for the full runbook, including docker-compose.
+`AI_API_KEY` is optional — without it, AI parsing is off and the rest of the app works. The Appwrite values are injected at container start, so no rebuild is needed.
+
+Provisioning is create-if-missing and never wipes existing data: restarting against a provisioned database duplicates nothing. If provisioning fails, the container exits immediately (fail-fast). A Docker restart policy such as `unless-stopped` will retry that failed start — fix the key or Appwrite reachability rather than assuming the app is up.
+
+The checkout path (`pnpm setup` / `pnpm seed`) remains available as an alternative; see [docs/self-hosting.md](docs/self-hosting.md) §2–3 for the full runbook, including docker-compose.
 
 ## Environment variables
 
@@ -55,7 +60,7 @@ Appwrite (required):
 
 - `NEXT_PUBLIC_APPWRITE_ENDPOINT` — your Appwrite endpoint, e.g. `https://fra.cloud.appwrite.io/v1`
 - `NEXT_PUBLIC_APPWRITE_PROJECT_ID` — the project ID
-- `APPWRITE_API_KEY` — a `databases`-scoped API key, used only by the `pnpm setup` / `pnpm seed` scripts (which load `.env.local`)
+- `APPWRITE_API_KEY` — a `databases`-scoped API key for `pnpm setup` / `pnpm seed` / `pnpm provision` (which load `.env.local`); it also doubles as the container provisioning key
 
 AI, optional (any OpenAI-compatible provider):
 
@@ -69,11 +74,6 @@ OpenRouter fallback (used when the matching `AI_*` variable is unset):
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL`
 - `OPENROUTER_TRANSCRIBE_MODEL`
-
-App, optional:
-
-- `NEXT_PUBLIC_APP_NAME` — display name in the UI and PWA metadata
-- `NEXT_PUBLIC_APP_URL` — canonical URL, used for PWA metadata
 
 AI is optional: without a key, text/photo/voice parsing is disabled and everything else works. The prompts themselves are documented in [docs/ai-prompts.md](docs/ai-prompts.md). AI calls run server-side only — provider keys are never exposed to the browser.
 

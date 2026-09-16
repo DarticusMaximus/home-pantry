@@ -12,7 +12,7 @@ Everything you need to run your own deployment. The README covers local developm
 
 1. In your Appwrite console, create a new project. Note its ID — this becomes `NEXT_PUBLIC_APPWRITE_PROJECT_ID`.
 2. Create a Web platform in the project if you want to restrict origins.
-3. Under the project's API keys, create a key scoped to `databases` (read + write). The `pnpm setup` and `pnpm seed` scripts use this key — it never reaches the browser.
+3. Under the project's API keys, create a key scoped to `databases` (read + write). The `pnpm setup`, `pnpm seed`, and `pnpm provision` scripts use this key — it never reaches the browser. Docker users can skip section 3: pass the same key as `APPWRITE_API_KEY` to the image (section 8) and the container provisions the schema itself.
 
 Copy `.env.example` to `.env.local` and fill in:
 
@@ -26,11 +26,10 @@ APPWRITE_API_KEY=your-databases-scoped-key
 
 ```bash
 pnpm install
-pnpm setup
-pnpm seed
+pnpm provision
 ```
 
-`pnpm setup` creates the database, collections, attributes, and indexes if they are missing, or verifies them if they already exist. `pnpm seed` loads sample categories, locations, and templates so the pantry is not empty on first run — you can delete the sample data from the UI afterwards.
+`pnpm provision` is the one-command form: it creates the database, collections, attributes, and indexes if they are missing, then loads sample categories, locations, and templates so the pantry is not empty on first run. You can still run `pnpm setup` then `pnpm seed` separately if you prefer — you can delete the sample data from the UI afterwards.
 
 Then start the dev server to try it out:
 
@@ -80,18 +79,19 @@ pantry.example.com {
 }
 ```
 
-Set `NEXT_PUBLIC_APP_URL` to the public HTTPS origin so PWA metadata points at the right place, and keep `NEXT_PUBLIC_APPWRITE_ENDPOINT` on HTTPS as well.
+Keep `NEXT_PUBLIC_APPWRITE_ENDPOINT` on HTTPS.
 
 Once the site is served over HTTPS, use your browser's Add to Home Screen / Install action — Home Pantry then runs full-screen and offline-capable like a native app.
 
 ## 8. Run the Docker image
 
-Every tagged release publishes a prebuilt image to `ghcr.io/darticusmaximus/home-pantry`, with both `1.0.0`-style version tags and `latest`. The image replaces the `pnpm build` / `pnpm start` step above — you still need the Appwrite project from section 2, and the schema from `pnpm setup` / `pnpm seed` run once from a checkout (section 3).
+Every tagged release publishes a prebuilt image to `ghcr.io/darticusmaximus/home-pantry`, with both `1.0.0`-style version tags and `latest`. The image replaces the `pnpm build` / `pnpm start` step above — you still need the Appwrite project from section 2. Pass `APPWRITE_API_KEY` to the container at start: the image provisions the database and starter data itself, then removes the key from the app's environment; no checkout is needed. Provisioning is create-if-missing and never wipes existing data: restarting against a provisioned database duplicates nothing. If provisioning fails, the container exits immediately (fail-fast). The compose `restart: unless-stopped` policy below will retry a failed start — fix the key or Appwrite reachability rather than assuming the app is up.
 
 ```bash
 docker run -d -p 3000:3000 \
   -e NEXT_PUBLIC_APPWRITE_ENDPOINT=https://your-appwrite.example/v1 \
   -e NEXT_PUBLIC_APPWRITE_PROJECT_ID=your-project-id \
+  -e APPWRITE_API_KEY=your-databases-scoped-key \
   -e AI_API_KEY=your-provider-key \
   ghcr.io/darticusmaximus/home-pantry:latest
 ```
@@ -100,6 +100,7 @@ The runtime environment:
 
 - `NEXT_PUBLIC_APPWRITE_ENDPOINT` — your Appwrite endpoint, including the `/v1` suffix
 - `NEXT_PUBLIC_APPWRITE_PROJECT_ID` — the project ID from section 2
+- `APPWRITE_API_KEY` — a `databases`-scoped API key; the image provisions the schema and starter data at start, then removes this key from the app's environment
 - `AI_API_KEY` — optional, server-side only; the other `AI_*` variables from section 5 work the same way
 
 Both `NEXT_PUBLIC_*` values are injected at container start by the image's entrypoint, so pointing the image at a different Appwrite needs no rebuild — just restart with new environment variables.
@@ -115,6 +116,7 @@ services:
     environment:
       NEXT_PUBLIC_APPWRITE_ENDPOINT: https://your-appwrite.example/v1
       NEXT_PUBLIC_APPWRITE_PROJECT_ID: your-project-id
+      APPWRITE_API_KEY: your-databases-scoped-key
       AI_API_KEY: your-provider-key
     restart: unless-stopped
 ```

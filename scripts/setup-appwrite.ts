@@ -1,5 +1,11 @@
 import { createInterface } from 'node:readline/promises'
+import { pathToFileURL } from 'node:url'
 import { config } from 'dotenv'
+import {
+  APPWRITE_SCRIPT_ENV_VARS,
+  describeResponseError,
+  missingEnvMessage,
+} from './lib/operator-helpers'
 
 config({ path: '.env.local' })
 
@@ -42,6 +48,7 @@ export type SetupOptions = {
   confirmWipe?: (params: ConfirmWipeParams) => Promise<boolean>
   stdin?: NodeJS.ReadStream
   stdout?: NodeJS.WritableStream
+  wipe?: boolean
 }
 
 export function isWipeRequested(
@@ -87,8 +94,9 @@ export async function confirmWipe({
 }
 
 export async function setup(options: SetupOptions = {}) {
-  if (!endpoint || !projectId || !apiKey) {
-    console.error('Missing environment variables')
+  const missingEnv = missingEnvMessage(process.env, APPWRITE_SCRIPT_ENV_VARS)
+  if (missingEnv) {
+    console.error(missingEnv)
     process.exit(1)
   }
 
@@ -98,28 +106,34 @@ export async function setup(options: SetupOptions = {}) {
   console.log(`Database: ${DATABASE_ID}`)
 
   async function apiCall(path: string, method: string = 'POST', body?: object) {
-    const response = await fetch(`${endpoint}${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Appwrite-Project': projectId as string,
-        'X-Appwrite-Key': apiKey as string,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    })
+    let response: Response
+    try {
+      response = await fetch(`${endpoint}${path}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Appwrite-Project': projectId as string,
+          'X-Appwrite-Key': apiKey as string,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(30_000),
+      })
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : String(error))
+    }
+
+    if (!response.ok) {
+      return {
+        error: await describeResponseError(response),
+        status: response.status,
+      }
+    }
 
     let payload: { message?: string } = {}
     try {
       payload = await response.json()
     } catch {
       payload = {}
-    }
-
-    if (!response.ok) {
-      return {
-        error: payload.message || JSON.stringify(payload),
-        status: response.status,
-      }
     }
 
     return { data: payload, status: response.status }
@@ -186,12 +200,12 @@ export async function setup(options: SetupOptions = {}) {
   }
 
   let wipe = false
-  if (isWipeRequested()) {
+  if (options.wipe !== false && isWipeRequested()) {
     console.log('\n2. Wipe requested for existing collections...')
     console.log(`   Wipe target: ${endpoint} / ${projectId} / ${DATABASE_ID}`)
     const confirmed = await (options.confirmWipe ?? confirmWipe)({
-      endpoint,
-      projectId,
+      endpoint: endpoint as string,
+      projectId: projectId as string,
       databaseId: DATABASE_ID,
       stdin: options.stdin,
       stdout: options.stdout,
@@ -398,7 +412,9 @@ export async function setup(options: SetupOptions = {}) {
   console.log('2. Run: pnpm seed')
 }
 
-if (process.env.NODE_ENV !== 'test') {
+const invokedAsScript = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (invokedAsScript) {
   setup().catch((error) => {
     console.error('Setup failed:', error)
     process.exit(1)

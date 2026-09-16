@@ -10,7 +10,30 @@ permissions:
   packages: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Sweep public tree
+        run: pnpm sweep
   release:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -48,13 +71,18 @@ jobs:
           IMAGE_TAG="${GITHUB_REF_NAME#v}"
           NOTES="Docker image: ghcr.io/darticusmaximus/home-pantry:${IMAGE_TAG}
 
+          Prerequisites: create an Appwrite project and a databases-scoped API key; pass APPWRITE_API_KEY to the container at start - the image provisions the database and starter data itself, then removes the key from the app's environment; no repo checkout needed. The checkout path remains in [docs/self-hosting.md](docs/self-hosting.md) sections 2-3 as an alternative.
+
           Run it:
 
           docker run -d -p 3000:3000 \\
             -e NEXT_PUBLIC_APPWRITE_ENDPOINT=https://your-appwrite.example/v1 \\
             -e NEXT_PUBLIC_APPWRITE_PROJECT_ID=your-project-id \\
+            -e APPWRITE_API_KEY=your-databases-scoped-key \\
             -e AI_API_KEY=your-key \\
             ghcr.io/darticusmaximus/home-pantry:${IMAGE_TAG}
+
+          AI_API_KEY is optional - without it, AI parsing is off and the rest of the app works.
 
           See docs/self-hosting.md for the full runbook."
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "$NOTES"

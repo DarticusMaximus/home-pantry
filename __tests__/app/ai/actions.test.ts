@@ -681,6 +681,48 @@ describe('scanImageToBatchReview', () => {
     expect(mockParse).not.toHaveBeenCalled()
   })
 
+  it('returns unauthenticated, not invalid_image, for oversized payloads from unauthenticated callers', async () => {
+    mockGetUserFromJwt.mockResolvedValue(null)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fromSpy = vi.spyOn(Buffer, 'from')
+
+    const result = await scanImageToBatchReview({
+      operation: 'add',
+      dataUrl: `data:image/png;base64,${'A'.repeat(10_000_000)}`,
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('unauthenticated')
+      expect(result.reason).not.toBe('invalid_image')
+      expect(result.message).toBe('Your session ended. Please sign in again.')
+    }
+    expect(fromSpy).not.toHaveBeenCalled()
+    expect(mockCreateAiClient).not.toHaveBeenCalled()
+    expect(mockParse).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+    fromSpy.mockRestore()
+  })
+
+  it('returns invalid_image for oversized payloads after authentication without decoding', async () => {
+    const fromSpy = vi.spyOn(Buffer, 'from')
+
+    const result = await scanImageToBatchReview({
+      operation: 'add',
+      dataUrl: `data:image/png;base64,${'A'.repeat(10_000_000)}`,
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('invalid_image')
+      expect(result.message).toBe(INVALID_PHOTO_COPY)
+    }
+    expect(fromSpy).not.toHaveBeenCalled()
+    expect(mockCreateAiClient).not.toHaveBeenCalled()
+    expect(mockParse).not.toHaveBeenCalled()
+    fromSpy.mockRestore()
+  })
+
   it('returns provider_error when the client is missing', async () => {
     mockCreateAiClient.mockReturnValue(null)
 

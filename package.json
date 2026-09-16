@@ -14,7 +14,9 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "seed": "tsx scripts/seed.ts",
-    "setup": "tsx scripts/setup-appwrite.ts"
+    "setup": "tsx scripts/setup-appwrite.ts",
+    "provision": "tsx scripts/provision.ts",
+    "sweep": "tsx scripts/sweep-public-tree.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -41,6 +43,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "2.1.9",
     "dotenv": "^17.3.1",
+    "esbuild": "^0.28.2",
     "jsdom": "^28.1.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.11",
