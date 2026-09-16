@@ -3,38 +3,111 @@ import { APPWRITE_SCRIPT_ENV_VARS, missingEnvMessage } from '@/scripts/lib/opera
 
 const COLLECTIONS = ['locations', 'categories', 'item_templates', 'items'] as const
 
+const INDEXED_COLLECTIONS = ['item_templates', 'items'] as const
+
 const POPULATED_TEMPLATE_NAMES = [
-  'Steak',
-  'Ground Beef',
-  'Chicken Breast',
-  'Pork Chops',
-  'Bacon',
-  'Hot Dogs',
-  'Frozen Vegetables',
-  'Frozen Pizza',
-  'Ice Cream',
-  'Frozen Berries',
   'Milk',
   'Eggs',
-  'Cheese (Shredded)',
   'Butter',
-  'Yogurt',
   'Bread',
   'Rice',
   'Pasta',
-  'Canned Tomatoes',
-  'Cereal',
-  'Orange Juice',
-  'Soda',
+  'Bananas',
+  'Apples',
+  'Ground Beef',
+  'Frozen Vegetables',
   'Coffee',
   'Ketchup',
-  'Mayonnaise',
-  'Mustard',
-  'Salad Dressing',
-  'Apples',
-  'Bananas',
-  'Onions',
 ]
+
+const FULL_SCHEMA: Record<string, { attributes: string[]; indexes: string[] }> = {
+  locations: {
+    attributes: ['name', 'description', 'icon', 'sortOrder', 'createdAt', 'updatedAt'],
+    indexes: [],
+  },
+  categories: {
+    attributes: ['name', 'description', 'icon', 'color', 'sortOrder', 'createdAt', 'updatedAt'],
+    indexes: [],
+  },
+  item_templates: {
+    attributes: [
+      'name',
+      'categoryId',
+      'defaultUnit',
+      'defaultQuantity',
+      'defaultExpirationDays',
+      'defaultStorageLocationId',
+      'notes',
+      'createdAt',
+      'updatedAt',
+    ],
+    indexes: ['name_index', 'category_index'],
+  },
+  items: {
+    attributes: [
+      'name',
+      'templateId',
+      'categoryId',
+      'locationId',
+      'quantity',
+      'unit',
+      'expirationDate',
+      'purchaseDate',
+      'notes',
+      'createdById',
+      'createdAt',
+      'updatedAt',
+    ],
+    indexes: [
+      'name_index',
+      'location_index',
+      'category_index',
+      'expiration_index',
+      'createdby_index',
+    ],
+  },
+}
+
+type AttributeStatus = 'available' | 'processing' | 'failed' | 'stuck'
+
+type StubAttribute = { key: string; type: string; status: AttributeStatus }
+
+type StubIndex = { key: string; attributes: string[] }
+
+type StubCollection = { attributes: StubAttribute[]; indexes: StubIndex[] }
+
+type CallKind =
+  | 'database'
+  | 'collection'
+  | 'attribute'
+  | 'poll'
+  | 'index'
+  | 'seed'
+  | 'delete'
+  | 'other'
+
+type RecordedResponse = {
+  kind: CallKind
+  collectionId: string
+  key?: string
+  method: string
+  url: string
+  status: number
+  position: number
+}
+
+type AttributeCreateRecord = { collectionId: string; key: string; body: Record<string, unknown> }
+
+type ProvisionStubOptions = {
+  documents?: 'empty' | 'populated' | 'reject'
+  setupError?: Error
+  stuck?: Array<{ collection: string; key: string }>
+  terminal?: Array<{ collection: string; key: string; status: 'failed' | 'stuck' }>
+  preSeed?: {
+    database?: boolean
+    collections?: Record<string, { attributes?: string[]; indexes?: string[] }>
+  }
+}
 
 function stubRequiredEnv() {
   vi.stubEnv('NEXT_PUBLIC_APPWRITE_ENDPOINT', 'https://appwrite.example.test/v1')
@@ -79,87 +152,14 @@ function alreadyExistsResponse() {
   }
 }
 
-function attributesResponse(status: 'available' | 'processing' | 'failed' | 'stuck', key = 'name') {
-  return jsonResponse({
-    total: 1,
-    attributes: [{ key, status }],
-  })
-}
-
-function callMethod(init?: RequestInit): string {
-  return init?.method ?? 'GET'
-}
-
-function isAttributesListGet(url: string, init?: RequestInit): boolean {
-  return callMethod(init) === 'GET' && /\/collections\/[^/]+\/attributes\/?(\?|$)/.test(String(url))
-}
-
-function collectionIdFromAttributesUrl(url: string): string {
-  return String(url).match(/\/collections\/([^/]+)\/attributes/)?.[1] ?? ''
-}
-
-function isDocumentUrl(url: string): boolean {
-  return String(url).includes('/documents')
-}
-
-function isSchemaDatabasePost(url: string, init?: RequestInit): boolean {
-  if (callMethod(init) !== 'POST') {
-    return false
+function badRequestResponse(message: string) {
+  return {
+    ok: false,
+    status: 400,
+    statusText: 'Bad Request',
+    json: async () => ({ message }),
+    text: async () => JSON.stringify({ message }),
   }
-  const path = String(url).split('?')[0] ?? ''
-  return /\/databases\/?$/.test(path)
-}
-
-function isCollectionCreatePost(url: string, init?: RequestInit): boolean {
-  if (callMethod(init) !== 'POST' || !init?.body) {
-    return false
-  }
-  const href = String(url)
-  if (!href.includes('/databases/home_pantry/collections')) {
-    return false
-  }
-  if (href.includes('/attributes') || href.includes('/indexes') || href.includes('/documents')) {
-    return false
-  }
-  const suffix = href.split('/databases/home_pantry/collections')[1] ?? ''
-  return suffix === '' || suffix === '/' || suffix.startsWith('?')
-}
-
-function collectionIdFromCreateBody(init?: RequestInit): string {
-  if (!init?.body) {
-    return ''
-  }
-  return (JSON.parse(String(init.body)) as { collectionId?: string }).collectionId ?? ''
-}
-
-function isAttributeCreatePost(url: string, init?: RequestInit): boolean {
-  return callMethod(init) === 'POST' && String(url).includes('/attributes/')
-}
-
-function isIndexCreatePost(url: string, init?: RequestInit): boolean {
-  return callMethod(init) === 'POST' && String(url).includes('/indexes')
-}
-
-function isDocumentPost(url: string, init?: RequestInit): boolean {
-  return callMethod(init) === 'POST' && isDocumentUrl(url)
-}
-
-function isDeleteCall(init?: RequestInit): boolean {
-  return callMethod(init) === 'DELETE'
-}
-
-function deleteCalls(fetchMock: ReturnType<typeof vi.fn>) {
-  return fetchMock.mock.calls.filter(([, init]) => isDeleteCall(init as RequestInit | undefined))
-}
-
-function documentPosts(fetchMock: ReturnType<typeof vi.fn>) {
-  return fetchMock.mock.calls.filter(([url, init]) =>
-    isDocumentPost(String(url), init as RequestInit | undefined),
-  )
-}
-
-function documentCalls(fetchMock: ReturnType<typeof vi.fn>) {
-  return fetchMock.mock.calls.filter(([url]) => isDocumentUrl(String(url)))
 }
 
 function populatedDocuments() {
@@ -199,54 +199,240 @@ function hangingFetch() {
   })
 }
 
-function installFetch(
-  attributeStatus: (
+function callMethod(init?: RequestInit): string {
+  return init?.method ?? 'GET'
+}
+
+function isAttributesListGet(url: string, init?: RequestInit): boolean {
+  return callMethod(init) === 'GET' && /\/collections\/[^/]+\/attributes\/?(\?|$)/.test(String(url))
+}
+
+function isDocumentUrl(url: string): boolean {
+  return String(url).includes('/documents')
+}
+
+function isSchemaDatabasePost(url: string, init?: RequestInit): boolean {
+  if (callMethod(init) !== 'POST') {
+    return false
+  }
+  const path = String(url).split('?')[0] ?? ''
+  return /\/databases\/?$/.test(path)
+}
+
+function isCollectionCreatePost(url: string, init?: RequestInit): boolean {
+  if (callMethod(init) !== 'POST' || !init?.body) {
+    return false
+  }
+  const href = String(url)
+  if (!href.includes('/databases/home_pantry/collections')) {
+    return false
+  }
+  if (href.includes('/attributes') || href.includes('/indexes') || href.includes('/documents')) {
+    return false
+  }
+  const suffix = href.split('/databases/home_pantry/collections')[1] ?? ''
+  return suffix === '' || suffix === '/' || suffix.startsWith('?')
+}
+
+function isAttributeCreatePost(url: string, init?: RequestInit): boolean {
+  return callMethod(init) === 'POST' && String(url).includes('/attributes/')
+}
+
+function isIndexCreatePost(url: string, init?: RequestInit): boolean {
+  return callMethod(init) === 'POST' && String(url).includes('/indexes')
+}
+
+function isDeleteCall(init?: RequestInit): boolean {
+  return callMethod(init) === 'DELETE'
+}
+
+function collectionIdFromUrl(url: string): string {
+  return (
+    String(url)
+      .split('?')[0]
+      ?.match(/\/collections\/([^/]+)/)?.[1] ?? ''
+  )
+}
+
+function attributeTypeFromUrl(url: string): string {
+  return (
+    String(url)
+      .split('?')[0]
+      ?.match(/\/attributes\/([^/]+)/)?.[1] ?? 'string'
+  )
+}
+
+function parseBody(init?: RequestInit): Record<string, unknown> {
+  if (!init?.body) {
+    return {}
+  }
+  try {
+    return JSON.parse(String(init.body)) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function installProvisionStub(options: ProvisionStubOptions = {}) {
+  const collections = new Map<string, StubCollection>()
+  const responses: RecordedResponse[] = []
+  const attributeCreateCalls: AttributeCreateRecord[] = []
+  let databaseExists = options.preSeed?.database === true
+
+  for (const [collectionId, spec] of Object.entries(options.preSeed?.collections ?? {})) {
+    collections.set(collectionId, {
+      attributes: (spec.attributes ?? []).map((key) => ({
+        key,
+        type: 'string',
+        status: 'available' as AttributeStatus,
+      })),
+      indexes: (spec.indexes ?? []).map((key) => ({ key, attributes: [] })),
+    })
+  }
+
+  const stuckForever = (collectionId: string, key: string) =>
+    (options.stuck ?? []).some((entry) => entry.collection === collectionId && entry.key === key)
+
+  const terminalStatusFor = (collectionId: string, key: string) =>
+    (options.terminal ?? []).find((entry) => entry.collection === collectionId && entry.key === key)
+      ?.status
+
+  function record(
+    kind: CallKind,
     collectionId: string,
-    pollIndex: number,
-  ) => 'available' | 'processing' | 'failed' | 'stuck',
-  options: {
-    alreadyExists?: boolean
-    documents?: 'empty' | 'populated' | 'reject'
-    setupError?: Error
-  } = {},
-) {
-  const polls = new Map<string, number>()
+    key: string | undefined,
+    method: string,
+    url: string,
+    status: number,
+  ) {
+    responses.push({ kind, collectionId, key, method, url, status, position: responses.length })
+  }
+
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-    if (options.setupError && !isAttributesListGet(url, init) && !isDocumentUrl(url)) {
+    const href = String(url)
+    const method = callMethod(init)
+
+    if (options.setupError && !isAttributesListGet(href, init) && !isDocumentUrl(href)) {
       throw options.setupError
     }
 
     if (isDeleteCall(init)) {
+      record('delete', collectionIdFromUrl(href), undefined, method, href, 204)
       return jsonResponse({}, 204)
     }
 
-    if (isAttributesListGet(url, init)) {
-      const collectionId = collectionIdFromAttributesUrl(url)
-      const next = (polls.get(collectionId) ?? 0) + 1
-      polls.set(collectionId, next)
-      const status = attributeStatus(collectionId, next)
-      const key = collectionId === 'item_templates' && status === 'stuck' ? 'categoryId' : 'name'
-      return attributesResponse(status, key)
+    if (isAttributesListGet(href, init)) {
+      const collectionId = collectionIdFromUrl(href)
+      const collection = collections.get(collectionId)
+      for (const attribute of collection?.attributes ?? []) {
+        if (attribute.status !== 'processing') {
+          continue
+        }
+        if (stuckForever(collectionId, attribute.key)) {
+          continue
+        }
+        attribute.status = terminalStatusFor(collectionId, attribute.key) ?? 'available'
+      }
+      const attributes = collection?.attributes ?? []
+      record('poll', collectionId, undefined, method, href, 200)
+      return jsonResponse({ total: attributes.length, attributes })
     }
 
-    if (isDocumentUrl(url)) {
+    if (isDocumentUrl(href)) {
+      const collectionId = collectionIdFromUrl(href)
       if (options.documents === 'reject') {
         throw new Error('seed failed')
       }
-      if (callMethod(init) === 'POST') {
+      if (method === 'POST') {
+        const collection = collections.get(collectionId)
+        const ready = (collection?.attributes ?? []).every(
+          (attribute) => attribute.status === 'available',
+        )
+        if (!ready) {
+          record('seed', collectionId, undefined, method, href, 400)
+          return badRequestResponse('Collection attributes are not available')
+        }
+        record('seed', collectionId, undefined, method, href, 201)
         return createdOk()
       }
+      record('seed', collectionId, undefined, method, href, 200)
       return options.documents === 'populated' ? populatedDocuments() : emptyDocuments()
     }
 
-    if (options.alreadyExists && callMethod(init) === 'POST') {
-      return alreadyExistsResponse()
+    const body = parseBody(init)
+
+    if (isSchemaDatabasePost(href, init)) {
+      if (databaseExists) {
+        record('database', '', undefined, method, href, 409)
+        return alreadyExistsResponse()
+      }
+      databaseExists = true
+      record('database', '', undefined, method, href, 201)
+      return createdOk()
     }
 
+    if (isCollectionCreatePost(href, init)) {
+      const collectionId = String(body.collectionId ?? '')
+      if (collections.has(collectionId)) {
+        record('collection', collectionId, collectionId, method, href, 409)
+        return alreadyExistsResponse()
+      }
+      collections.set(collectionId, { attributes: [], indexes: [] })
+      record('collection', collectionId, collectionId, method, href, 201)
+      return createdOk()
+    }
+
+    if (isAttributeCreatePost(href, init)) {
+      const collectionId = collectionIdFromUrl(href)
+      const key = String(body.key ?? '')
+      attributeCreateCalls.push({ collectionId, key, body })
+      const collection = collections.get(collectionId) ?? { attributes: [], indexes: [] }
+      if (collection.attributes.some((attribute) => attribute.key === key)) {
+        record('attribute', collectionId, key, method, href, 409)
+        return alreadyExistsResponse()
+      }
+      if (body.required === true && body.default !== undefined) {
+        record('attribute', collectionId, key, method, href, 400)
+        return badRequestResponse('Cannot set default value for required attribute')
+      }
+      collection.attributes.push({ key, type: attributeTypeFromUrl(href), status: 'processing' })
+      record('attribute', collectionId, key, method, href, 202)
+      return jsonResponse({ key, status: 'processing' }, 202)
+    }
+
+    if (isIndexCreatePost(href, init)) {
+      const collectionId = collectionIdFromUrl(href)
+      const key = String(body.key ?? '')
+      const collection = collections.get(collectionId) ?? { attributes: [], indexes: [] }
+      if (collection.indexes.some((index) => index.key === key)) {
+        record('index', collectionId, key, method, href, 409)
+        return alreadyExistsResponse()
+      }
+      const referenced = Array.isArray(body.attributes) ? body.attributes.map(String) : []
+      for (const attributeKey of referenced) {
+        const attribute = collection.attributes.find((candidate) => candidate.key === attributeKey)
+        if (!attribute || attribute.status !== 'available') {
+          record('index', collectionId, key, method, href, 400)
+          return badRequestResponse(`Attribute not available: ${attributeKey}`)
+        }
+      }
+      collection.indexes.push({ key, attributes: referenced })
+      record('index', collectionId, key, method, href, 202)
+      return jsonResponse({}, 202)
+    }
+
+    record('other', collectionIdFromUrl(href), undefined, method, href, 201)
     return createdOk()
   })
+
   vi.stubGlobal('fetch', fetchMock)
-  return fetchMock
+
+  return {
+    fetchMock,
+    responses: () => [...responses],
+    nonOkResponses: () => responses.filter((response) => response.status >= 300),
+    attributeCreateCalls: () => [...attributeCreateCalls],
+  }
 }
 
 async function loadProvision() {
@@ -262,129 +448,78 @@ afterEach(() => {
 })
 
 describe('provision', () => {
-  it('runs setup then polls attributes until available then seeds', async () => {
+  it('provisions a fresh project end to end with only 2xx responses', async () => {
     stubRequiredEnv()
-    const fetchMock = installFetch(() => 'available', { documents: 'empty' })
+    const stub = installProvisionStub({ documents: 'empty' })
     mockConsole()
 
     const { provision } = await loadProvision()
     await provision()
 
-    const labels = fetchMock.mock.calls.map(([url, init]) => {
-      const href = String(url)
-      const request = init as RequestInit | undefined
-      if (isSchemaDatabasePost(href, request)) {
-        return 'database'
-      }
-      if (isCollectionCreatePost(href, request)) {
-        return `collection:${collectionIdFromCreateBody(request)}`
-      }
-      if (isAttributeCreatePost(href, request)) {
-        return 'attribute'
-      }
-      if (isIndexCreatePost(href, request)) {
-        return 'index'
-      }
-      if (isAttributesListGet(href, request)) {
-        return `poll:${collectionIdFromAttributesUrl(href)}`
-      }
-      if (isDocumentUrl(href)) {
-        return 'seed'
-      }
-      return null
-    })
+    expect(stub.nonOkResponses()).toEqual([])
 
-    const databaseAt = labels.indexOf('database')
-    const locationsAt = labels.indexOf('collection:locations')
-    const categoriesAt = labels.indexOf('collection:categories')
-    const templatesAt = labels.indexOf('collection:item_templates')
-    const itemsAt = labels.indexOf('collection:items')
-    const attributeAt = labels.indexOf('attribute')
-    const indexAt = labels.indexOf('index')
-    const firstPollAt = labels.findIndex((label) => label?.startsWith('poll:'))
-    const firstSeedAt = labels.indexOf('seed')
-
-    expect(databaseAt).toBeGreaterThanOrEqual(0)
-    expect(locationsAt).toBeGreaterThan(databaseAt)
-    expect(categoriesAt).toBeGreaterThan(locationsAt)
-    expect(templatesAt).toBeGreaterThan(categoriesAt)
-    expect(itemsAt).toBeGreaterThan(templatesAt)
-    expect(attributeAt).toBeGreaterThan(locationsAt)
-    expect(indexAt).toBeGreaterThan(attributeAt)
-    expect(firstPollAt).toBeGreaterThan(Math.max(attributeAt, indexAt, itemsAt))
-    expect(firstSeedAt).toBeGreaterThan(firstPollAt)
-
-    for (const collectionId of COLLECTIONS) {
-      expect(labels).toContain(`poll:${collectionId}`)
-    }
-    expect(deleteCalls(fetchMock)).toHaveLength(0)
-  })
-
-  it('retries attributes that are processing until they become available before seeding', async () => {
-    stubRequiredEnv()
-    vi.useFakeTimers()
-    const fetchMock = installFetch((_collectionId, pollIndex) =>
-      pollIndex === 1 ? 'processing' : 'available',
-    )
-    mockConsole()
-
-    const { provision } = await loadProvision()
-    const pending = provision()
-    await vi.advanceTimersByTimeAsync(2_000)
-    await pending
-
-    const firstSeedAt = fetchMock.mock.calls.findIndex(([url]) => isDocumentUrl(String(url)))
-    expect(firstSeedAt).toBeGreaterThan(-1)
-
-    const pollsBeforeSeed = fetchMock.mock.calls
-      .slice(0, firstSeedAt)
-      .filter(([url, init]) => isAttributesListGet(String(url), init as RequestInit | undefined))
-    expect(pollsBeforeSeed.length).toBeGreaterThanOrEqual(COLLECTIONS.length * 2)
-
-    for (const collectionId of COLLECTIONS) {
-      const polls = pollsBeforeSeed.filter(
-        ([url]) => collectionIdFromAttributesUrl(String(url)) === collectionId,
+    const responses = stub.responses()
+    const firstPoll = (collectionId: string) =>
+      responses.find(
+        (response) => response.kind === 'poll' && response.collectionId === collectionId,
       )
-      expect(polls.length).toBeGreaterThanOrEqual(2)
+
+    for (const collectionId of COLLECTIONS) {
+      const attributePosts = responses.filter(
+        (response) => response.kind === 'attribute' && response.collectionId === collectionId,
+      )
+      expect(attributePosts.length, collectionId).toBeGreaterThan(0)
+      const poll = firstPoll(collectionId)
+      expect(poll, collectionId).toBeDefined()
+      expect(poll?.position ?? -1, collectionId).toBeGreaterThan(
+        attributePosts[attributePosts.length - 1]?.position ?? -1,
+      )
     }
+
+    for (const collectionId of INDEXED_COLLECTIONS) {
+      const indexPosts = responses.filter(
+        (response) => response.kind === 'index' && response.collectionId === collectionId,
+      )
+      expect(indexPosts.length, collectionId).toBeGreaterThan(0)
+      expect(indexPosts[0]?.position ?? -1, collectionId).toBeGreaterThan(
+        firstPoll(collectionId)?.position ?? -1,
+      )
+    }
+
+    const seedPosts = responses.filter(
+      (response) => response.kind === 'seed' && response.method === 'POST',
+    )
+    expect(seedPosts.length).toBeGreaterThan(0)
+    for (const collectionId of COLLECTIONS) {
+      expect(seedPosts[0]?.position ?? -1, collectionId).toBeGreaterThan(
+        firstPoll(collectionId)?.position ?? -1,
+      )
+    }
+
+    expect(responses.filter((response) => response.kind === 'delete')).toHaveLength(0)
   })
 
-  it('rejects a failed attribute naming the collection and key and does not seed', async () => {
+  it('never creates an attribute with required true and a default', async () => {
     stubRequiredEnv()
-    const fetchMock = installFetch((collectionId) =>
-      collectionId === 'locations' ? 'failed' : 'available',
-    )
+    const stub = installProvisionStub({ documents: 'empty' })
     mockConsole()
 
     const { provision } = await loadProvision()
-    const error = await captureError(provision)
+    await provision()
 
-    expect(error.message).toContain('locations')
-    expect(error.message).toContain('name')
-    expect(error.message.toLowerCase()).toContain('failed')
-    expect(documentCalls(fetchMock)).toHaveLength(0)
+    const offenders = stub
+      .attributeCreateCalls()
+      .filter(({ body }) => body.default !== undefined && body.required !== false)
+    expect(offenders).toEqual([])
   })
 
-  it('rejects a stuck attribute naming the collection and key and does not seed', async () => {
-    stubRequiredEnv()
-    const fetchMock = installFetch((collectionId) =>
-      collectionId === 'item_templates' ? 'stuck' : 'available',
-    )
-    mockConsole()
-
-    const { provision } = await loadProvision()
-    const error = await captureError(provision)
-
-    expect(error.message).toContain('item_templates')
-    expect(error.message).toContain('categoryId')
-    expect(error.message.toLowerCase()).toContain('stuck')
-    expect(documentCalls(fetchMock)).toHaveLength(0)
-  })
-
-  it('rejects when attribute polling exceeds 120s naming the pending collection', async () => {
+  it('rejects when an attribute never leaves processing, naming the pending collection, without seeding', async () => {
     stubRequiredEnv()
     vi.useFakeTimers()
-    const fetchMock = installFetch(() => 'processing')
+    const stub = installProvisionStub({
+      documents: 'empty',
+      stuck: [{ collection: 'items', key: 'quantity' }],
+    })
     mockConsole()
 
     const { provision } = await loadProvision()
@@ -393,41 +528,176 @@ describe('provision', () => {
     await vi.advanceTimersByTimeAsync(120_000)
     const error = await errorPromise
 
-    expect(error.message).toMatch(/locations|categories|item_templates|items/)
-    expect(documentCalls(fetchMock)).toHaveLength(0)
+    expect(error.message).toContain('items')
+    expect(stub.responses().filter((response) => response.kind === 'seed')).toHaveLength(0)
   })
 
-  it('never issues DELETE even when SETUP_WIPE and SETUP_WIPE_CONFIRM are set', async () => {
+  it('rejects a failed attribute naming the collection and key and does not seed', async () => {
     stubRequiredEnv()
-    vi.stubEnv('SETUP_WIPE', '1')
-    vi.stubEnv('SETUP_WIPE_CONFIRM', 'yes')
-    const fetchMock = installFetch(() => 'available', { documents: 'empty' })
+    const stub = installProvisionStub({
+      documents: 'empty',
+      terminal: [{ collection: 'locations', key: 'name', status: 'failed' }],
+    })
     mockConsole()
 
     const { provision } = await loadProvision()
-    await provision()
+    const error = await captureError(provision)
 
-    expect(deleteCalls(fetchMock)).toHaveLength(0)
+    expect(error.message).toContain('locations')
+    expect(error.message).toContain('name')
+    expect(error.message.toLowerCase()).toContain('failed')
+    expect(stub.responses().filter((response) => response.kind === 'seed')).toHaveLength(0)
   })
 
-  it('is idempotent against an already-provisioned project', async () => {
+  it('rejects a stuck attribute naming the collection and key and does not seed', async () => {
     stubRequiredEnv()
-    const fetchMock = installFetch(() => 'available', {
-      alreadyExists: true,
-      documents: 'populated',
+    const stub = installProvisionStub({
+      documents: 'empty',
+      terminal: [{ collection: 'item_templates', key: 'categoryId', status: 'stuck' }],
+    })
+    mockConsole()
+
+    const { provision } = await loadProvision()
+    const error = await captureError(provision)
+
+    expect(error.message).toContain('item_templates')
+    expect(error.message).toContain('categoryId')
+    expect(error.message.toLowerCase()).toContain('stuck')
+    expect(stub.responses().filter((response) => response.kind === 'seed')).toHaveLength(0)
+  })
+
+  it('heals a half-built project without deleting or recreating existing parts', async () => {
+    stubRequiredEnv()
+    const stub = installProvisionStub({
+      documents: 'empty',
+      preSeed: {
+        database: true,
+        collections: {
+          locations: FULL_SCHEMA.locations,
+          item_templates: { attributes: ['name'] },
+        },
+      },
     })
     mockConsole()
 
     const { provision } = await loadProvision()
     await provision()
 
-    expect(deleteCalls(fetchMock)).toHaveLength(0)
-    expect(documentPosts(fetchMock)).toHaveLength(0)
+    const responses = stub.responses()
+    expect(responses.filter((response) => response.kind === 'delete')).toHaveLength(0)
+    expect(responses.filter((response) => response.status === 400)).toHaveLength(0)
+
+    const recreatedExistingParts = responses.filter(
+      (response) =>
+        response.status < 300 &&
+        (response.kind === 'collection' || response.kind === 'attribute') &&
+        (response.collectionId === 'locations' ||
+          (response.collectionId === 'item_templates' &&
+            response.kind === 'attribute' &&
+            response.key === 'name')),
+    )
+    expect(recreatedExistingParts).toHaveLength(0)
+
+    const createdTemplateAttributes = responses
+      .filter(
+        (response) =>
+          response.kind === 'attribute' &&
+          response.collectionId === 'item_templates' &&
+          response.status < 300,
+      )
+      .map((response) => response.key)
+    expect(createdTemplateAttributes).not.toContain('name')
+    expect(createdTemplateAttributes).toEqual(
+      expect.arrayContaining([
+        'categoryId',
+        'defaultUnit',
+        'defaultQuantity',
+        'notes',
+        'createdAt',
+        'updatedAt',
+      ]),
+    )
+
+    const createdIndexes = responses
+      .filter((response) => response.kind === 'index' && response.status < 300)
+      .map((response) => response.key)
+    expect(createdIndexes).toEqual(
+      expect.arrayContaining([
+        'name_index',
+        'category_index',
+        'location_index',
+        'expiration_index',
+        'createdby_index',
+      ]),
+    )
+
+    expect(
+      responses.some((response) => response.kind === 'seed' && response.method === 'POST'),
+    ).toBe(true)
+  })
+
+  it('never issues DELETE even when SETUP_WIPE and SETUP_WIPE_CONFIRM are set', async () => {
+    stubRequiredEnv()
+    vi.stubEnv('SETUP_WIPE', '1')
+    vi.stubEnv('SETUP_WIPE_CONFIRM', 'yes')
+    const stub = installProvisionStub({
+      documents: 'empty',
+      preSeed: { database: true, collections: FULL_SCHEMA },
+    })
+    mockConsole()
+
+    const { provision } = await loadProvision()
+    await provision()
+
+    expect(stub.responses().filter((response) => response.kind === 'delete')).toHaveLength(0)
+  })
+
+  it('is idempotent against an already-provisioned project', async () => {
+    stubRequiredEnv()
+    const stub = installProvisionStub({
+      documents: 'populated',
+      preSeed: { database: true, collections: FULL_SCHEMA },
+    })
+    mockConsole()
+
+    const { provision } = await loadProvision()
+    await provision()
+
+    const responses = stub.responses()
+    expect(responses.filter((response) => response.status === 400)).toHaveLength(0)
+    expect(responses.filter((response) => response.kind === 'delete')).toHaveLength(0)
+
+    const successfulCreates = responses.filter(
+      (response) =>
+        response.status < 300 &&
+        (response.kind === 'database' ||
+          response.kind === 'collection' ||
+          response.kind === 'attribute' ||
+          response.kind === 'index'),
+    )
+    expect(successfulCreates).toHaveLength(0)
+
+    const collectionProbes = responses.filter((response) => response.kind === 'collection')
+    expect(collectionProbes.map((response) => response.collectionId).sort()).toEqual(
+      [...COLLECTIONS].sort(),
+    )
+    for (const probe of collectionProbes) {
+      expect(probe.status).toBe(409)
+    }
+
+    expect(
+      responses.filter((response) => response.kind === 'seed' && response.method === 'POST'),
+    ).toHaveLength(0)
+
+    const logged = vi.mocked(console.log).mock.calls.flat().map(String).join(' ')
+    expect(logged).toContain('Skipped - locations already exist')
+    expect(logged).toContain('Skipped - categories already exist')
+    expect(logged).toContain('Skipped - templates already exist')
   })
 
   it('rejects when a setup fetch fails', async () => {
     stubRequiredEnv()
-    installFetch(() => 'available', { setupError: new Error('Appwrite unreachable') })
+    installProvisionStub({ setupError: new Error('Appwrite unreachable') })
     mockConsole()
 
     const { provision } = await loadProvision()
@@ -438,18 +708,17 @@ describe('provision', () => {
 
   it('rejects when a seed fetch fails after attributes are available', async () => {
     stubRequiredEnv()
-    const fetchMock = installFetch(() => 'available', { documents: 'reject' })
+    const stub = installProvisionStub({
+      documents: 'reject',
+      preSeed: { database: true, collections: FULL_SCHEMA },
+    })
     mockConsole()
 
     const { provision } = await loadProvision()
     const error = await captureError(provision)
 
     expect(error.message).toContain('seed failed')
-    expect(
-      fetchMock.mock.calls.some(([url, init]) =>
-        isAttributesListGet(String(url), init as RequestInit | undefined),
-      ),
-    ).toBe(true)
+    expect(stub.responses().some((response) => response.kind === 'poll')).toBe(true)
   })
 
   it('names missing environment variables and does not fetch', async () => {

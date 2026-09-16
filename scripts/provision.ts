@@ -1,17 +1,14 @@
-import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { config } from 'dotenv'
 import {
   APPWRITE_SCRIPT_ENV_VARS,
   describeResponseError,
+  loadLocalEnv,
   missingEnvMessage,
 } from './lib/operator-helpers'
 import { seed } from './seed'
 import { setup } from './setup-appwrite'
 
-if (existsSync('.env.local')) {
-  config({ path: '.env.local', quiet: true })
-}
+loadLocalEnv()
 
 const DATABASE_ID = 'home_pantry'
 const COLLECTIONS = ['locations', 'categories', 'item_templates', 'items'] as const

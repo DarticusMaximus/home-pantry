@@ -1,13 +1,13 @@
 import { pathToFileURL } from 'node:url'
-import { config } from 'dotenv'
 import {
   APPWRITE_SCRIPT_ENV_VARS,
   describeResponseError,
+  loadLocalEnv,
   missingEnvMessage,
 } from './lib/operator-helpers'
 import { seedTemplates } from './seed-templates'
 
-config({ path: '.env.local' })
+loadLocalEnv()
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID
@@ -17,10 +17,8 @@ const DATABASE_ID = 'home_pantry'
 
 const defaultLocations = [
   { name: 'Fridge', icon: 'refrigerator', sortOrder: 1 },
-  { name: 'Fridge Freezer', icon: 'snowflake', sortOrder: 2 },
-  { name: 'Large Freezer', icon: 'snowflake', sortOrder: 3 },
-  { name: 'Deep Freezer', icon: 'archive', sortOrder: 4 },
-  { name: 'Pantry', icon: 'warehouse', sortOrder: 5 },
+  { name: 'Freezer', icon: 'snowflake', sortOrder: 2 },
+  { name: 'Pantry', icon: 'warehouse', sortOrder: 3 },
 ]
 
 const defaultCategories = [

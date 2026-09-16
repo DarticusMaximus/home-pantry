@@ -16,6 +16,7 @@
     "seed": "tsx scripts/seed.ts",
     "setup": "tsx scripts/setup-appwrite.ts",
     "provision": "tsx scripts/provision.ts",
+    "smoke:image": "tsx scripts/smoke-image.ts",
     "sweep": "tsx scripts/sweep-public-tree.ts"
   },
   "dependencies": {

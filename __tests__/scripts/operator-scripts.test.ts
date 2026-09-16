@@ -1,9 +1,18 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { config } from 'dotenv'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   APPWRITE_SCRIPT_ENV_VARS,
   describeResponseError,
+  loadLocalEnv,
   missingEnvMessage,
 } from '@/scripts/lib/operator-helpers'
+
+vi.mock('dotenv', () => ({
+  config: vi.fn(),
+}))
 
 function stubRequiredEnv() {
   vi.stubEnv('NEXT_PUBLIC_APPWRITE_ENDPOINT', 'https://appwrite.example.test/v1')
@@ -123,6 +132,39 @@ describe('missingEnvMessage', () => {
         APPWRITE_SCRIPT_ENV_VARS,
       ),
     ).toBe('Missing environment variables: NEXT_PUBLIC_APPWRITE_PROJECT_ID, APPWRITE_API_KEY')
+  })
+})
+
+describe('loadLocalEnv', () => {
+  const originalCwd = process.cwd()
+
+  afterEach(() => {
+    process.chdir(originalCwd)
+  })
+
+  it('does not call dotenv config and emits no output when .env.local is absent', () => {
+    const emptyDir = mkdtempSync(join(tmpdir(), 'load-local-env-'))
+    process.chdir(emptyDir)
+    mockConsole()
+
+    loadLocalEnv()
+
+    expect(config).not.toHaveBeenCalled()
+    expect(console.log).not.toHaveBeenCalled()
+    expect(console.warn).not.toHaveBeenCalled()
+    expect(console.error).not.toHaveBeenCalled()
+  })
+
+  it('loads .env.local quietly exactly once when present', () => {
+    const envDir = mkdtempSync(join(tmpdir(), 'load-local-env-'))
+    writeFileSync(join(envDir, '.env.local'), 'NEXT_PUBLIC_APPWRITE_PROJECT_ID=from-env-local\n')
+    process.chdir(envDir)
+    mockConsole()
+
+    loadLocalEnv()
+
+    expect(config).toHaveBeenCalledTimes(1)
+    expect(config).toHaveBeenCalledWith({ path: '.env.local', quiet: true })
   })
 })
 

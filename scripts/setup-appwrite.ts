@@ -1,19 +1,21 @@
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
-import { config } from 'dotenv'
 import {
   APPWRITE_SCRIPT_ENV_VARS,
   describeResponseError,
+  loadLocalEnv,
   missingEnvMessage,
 } from './lib/operator-helpers'
 
-config({ path: '.env.local' })
+loadLocalEnv()
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID
 const apiKey = process.env.APPWRITE_API_KEY
 
 const DATABASE_ID = 'home_pantry'
+const ATTRIBUTE_POLL_INTERVAL_MS = 2_000
+const ATTRIBUTE_POLL_TIMEOUT_MS = 120_000
 
 export function createAttributeBody(attr: {
   key: string
@@ -49,6 +51,7 @@ export type SetupOptions = {
   stdin?: NodeJS.ReadStream
   stdout?: NodeJS.WritableStream
   wipe?: boolean
+  sleep?: (ms: number) => Promise<void>
 }
 
 export function isWipeRequested(
@@ -93,6 +96,94 @@ export async function confirmWipe({
   }
 }
 
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function apiCall(path: string, method: string = 'POST', body?: object) {
+  let response: Response
+  try {
+    response = await fetch(`${endpoint}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Appwrite-Project': projectId as string,
+        'X-Appwrite-Key': apiKey as string,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    })
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error))
+  }
+
+  if (!response.ok) {
+    return {
+      error: await describeResponseError(response),
+      status: response.status,
+    }
+  }
+
+  let payload: { message?: string } = {}
+  try {
+    payload = await response.json()
+  } catch {
+    payload = {}
+  }
+
+  return { data: payload, status: response.status }
+}
+
+type CollectionAttribute = {
+  key?: string
+  status?: string
+}
+
+export async function waitForCollectionAttributesAvailable(
+  collectionId: string,
+  options: SetupOptions = {},
+): Promise<void> {
+  const sleep = options.sleep ?? defaultSleep
+  const startedAt = Date.now()
+
+  for (;;) {
+    const result = await apiCall(
+      `/databases/${DATABASE_ID}/collections/${collectionId}/attributes`,
+      'GET',
+    )
+
+    if (result.error) {
+      throw new Error(`Failed to list attributes for collection ${collectionId}: ${result.error}`)
+    }
+
+    const payload = (result.data ?? {}) as { attributes?: CollectionAttribute[] }
+    const attributes = Array.isArray(payload.attributes) ? payload.attributes : []
+    let pending = false
+
+    for (const attribute of attributes) {
+      const key = typeof attribute.key === 'string' ? attribute.key : 'unknown'
+      if (attribute.status === 'failed' || attribute.status === 'stuck') {
+        throw new Error(`Attribute ${key} on collection ${collectionId} ${attribute.status}`)
+      }
+      if (attribute.status !== 'available') {
+        pending = true
+      }
+    }
+
+    if (!pending) {
+      return
+    }
+
+    if (Date.now() - startedAt >= ATTRIBUTE_POLL_TIMEOUT_MS) {
+      throw new Error(`Timed out waiting for attributes on collection ${collectionId}`)
+    }
+
+    await sleep(ATTRIBUTE_POLL_INTERVAL_MS)
+  }
+}
+
 export async function setup(options: SetupOptions = {}) {
   const missingEnv = missingEnvMessage(process.env, APPWRITE_SCRIPT_ENV_VARS)
   if (missingEnv) {
@@ -104,40 +195,6 @@ export async function setup(options: SetupOptions = {}) {
   console.log(`Endpoint: ${endpoint}`)
   console.log(`Project: ${projectId}`)
   console.log(`Database: ${DATABASE_ID}`)
-
-  async function apiCall(path: string, method: string = 'POST', body?: object) {
-    let response: Response
-    try {
-      response = await fetch(`${endpoint}${path}`, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Appwrite-Project': projectId as string,
-          'X-Appwrite-Key': apiKey as string,
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(30_000),
-      })
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : String(error))
-    }
-
-    if (!response.ok) {
-      return {
-        error: await describeResponseError(response),
-        status: response.status,
-      }
-    }
-
-    let payload: { message?: string } = {}
-    try {
-      payload = await response.json()
-    } catch {
-      payload = {}
-    }
-
-    return { data: payload, status: response.status }
-  }
 
   async function deleteCollection(collectionId: string) {
     const result = await apiCall(`/databases/${DATABASE_ID}/collections/${collectionId}`, 'DELETE')
@@ -261,6 +318,8 @@ export async function setup(options: SetupOptions = {}) {
     assertSchemaPartCreated(attrResult, 'attribute', attr.key)
   }
 
+  await waitForCollectionAttributesAvailable('locations', options)
+
   console.log('\n3. Creating categories collection...')
   const catResult = await apiCall(`/databases/${DATABASE_ID}/collections`, 'POST', {
     collectionId: 'categories',
@@ -298,6 +357,8 @@ export async function setup(options: SetupOptions = {}) {
     assertSchemaPartCreated(attrResult, 'attribute', attr.key)
   }
 
+  await waitForCollectionAttributesAvailable('categories', options)
+
   console.log('\n4. Creating item_templates collection...')
   const itemTemplatesResult = await apiCall(`/databases/${DATABASE_ID}/collections`, 'POST', {
     collectionId: 'item_templates',
@@ -312,8 +373,8 @@ export async function setup(options: SetupOptions = {}) {
   const itemTemplatesAttributes = [
     { key: 'name', type: 'string', size: 255, required: true },
     { key: 'categoryId', type: 'string', size: 255, required: false },
-    { key: 'defaultUnit', type: 'string', size: 50, required: true, default: 'each' },
-    { key: 'defaultQuantity', type: 'float', required: true, default: 1.0 },
+    { key: 'defaultUnit', type: 'string', size: 50, required: false, default: 'each' },
+    { key: 'defaultQuantity', type: 'float', required: false, default: 1.0 },
     { key: 'defaultExpirationDays', type: 'integer', required: false },
     { key: 'defaultStorageLocationId', type: 'string', size: 255, required: false },
     { key: 'notes', type: 'string', size: 1000, required: false },
@@ -329,6 +390,8 @@ export async function setup(options: SetupOptions = {}) {
     )
     assertSchemaPartCreated(attrResult, 'attribute', attr.key)
   }
+
+  await waitForCollectionAttributesAvailable('item_templates', options)
 
   console.log('   Adding indexes to item_templates...')
   const itemTemplatesIndexes = [
@@ -384,6 +447,8 @@ export async function setup(options: SetupOptions = {}) {
     assertSchemaPartCreated(attrResult, 'attribute', attr.key)
   }
 
+  await waitForCollectionAttributesAvailable('items', options)
+
   console.log('   Adding indexes to items...')
   const itemsIndexes = [
     { key: 'name_index', type: 'fulltext', attributes: ['name'] },
@@ -408,8 +473,9 @@ export async function setup(options: SetupOptions = {}) {
 
   console.log('\nSetup complete!')
   console.log('\nNext steps:')
-  console.log('1. Wait 10-20 seconds for collections to be fully ready')
-  console.log('2. Run: pnpm seed')
+  console.log('1. Schema is ready now (all attributes verified available)')
+  console.log('2. Load starter data: pnpm seed')
+  console.log('3. Setup + seed in one step: pnpm provision')
 }
 
 const invokedAsScript = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href

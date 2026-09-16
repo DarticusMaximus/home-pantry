@@ -5,6 +5,23 @@ const CATEGORIES_DOCUMENTS_PATH = '/databases/home_pantry/collections/categories
 const LOCATIONS_DOCUMENTS_PATH = '/databases/home_pantry/collections/locations/documents'
 const APPWRITE_PAGE_CAP = 100
 
+const STARTER_TEMPLATE_ORDER = [
+  'Milk',
+  'Eggs',
+  'Butter',
+  'Bread',
+  'Rice',
+  'Pasta',
+  'Bananas',
+  'Apples',
+  'Ground Beef',
+  'Frozen Vegetables',
+  'Coffee',
+  'Ketchup',
+]
+
+const FRIDGE_ONLY_TEMPLATE_ORDER = ['Milk', 'Eggs', 'Butter', 'Apples', 'Ketchup']
+
 function stubRequiredEnv() {
   vi.stubEnv('NEXT_PUBLIC_APPWRITE_ENDPOINT', 'https://appwrite.example.test/v1')
   vi.stubEnv('NEXT_PUBLIC_APPWRITE_PROJECT_ID', 'project-1')
@@ -23,6 +40,14 @@ function mockConsole() {
   vi.spyOn(console, 'log').mockImplementation(() => {})
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
+}
+
+function consoleLogText(): string {
+  return vi.mocked(console.log).mock.calls.flat().map(String).join(' ')
+}
+
+function consoleWarnText(): string {
+  return vi.mocked(console.warn).mock.calls.flat().map(String).join(' ')
 }
 
 function parseListQueries(url: string): { method: string; values: unknown[] }[] {
@@ -78,29 +103,58 @@ function createdTemplateNames(fetchMock: ReturnType<typeof vi.fn>): string[] {
   })
 }
 
+function createdTemplateBodies(
+  fetchMock: ReturnType<typeof vi.fn>,
+): { data?: { categoryId?: string | null; defaultStorageLocationId?: string | null } }[] {
+  return templateCreateCalls(fetchMock).map(([, init]) => {
+    return JSON.parse(String((init as RequestInit).body)) as {
+      data?: { categoryId?: string | null; defaultStorageLocationId?: string | null }
+    }
+  })
+}
+
+function lookupListCalls(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls.filter(([url, init]) => {
+    const href = String(url)
+    const method = init?.method ?? 'GET'
+    return (
+      method === 'GET' &&
+      (href.includes(CATEGORIES_DOCUMENTS_PATH) || href.includes(LOCATIONS_DOCUMENTS_PATH))
+    )
+  })
+}
+
 function isTemplatesListGet(url: string, init?: RequestInit) {
   const method = init?.method ?? 'GET'
   return method === 'GET' && String(url).includes(TEMPLATES_DOCUMENTS_PATH)
 }
 
-function lookupDocuments() {
+function lookupDocuments(options?: { locations?: { $id: string; name: string }[] }) {
   return {
     categories: [
       { $id: 'cat-meat', name: 'Meat' },
       { $id: 'cat-dairy', name: 'Dairy' },
+      { $id: 'cat-produce', name: 'Produce' },
+      { $id: 'cat-frozen', name: 'Frozen' },
+      { $id: 'cat-pantry', name: 'Pantry' },
+      { $id: 'cat-beverages', name: 'Beverages' },
+      { $id: 'cat-condiments', name: 'Condiments' },
+      { $id: 'cat-other', name: 'Other' },
     ],
-    locations: [
+    locations: options?.locations ?? [
       { $id: 'loc-fridge', name: 'Fridge' },
-      { $id: 'loc-freezer', name: 'Large Freezer' },
+      { $id: 'loc-freezer', name: 'Freezer' },
+      { $id: 'loc-pantry', name: 'Pantry' },
     ],
   }
 }
 
 function makeFetchMock(options: {
   existingTemplates?: { $id: string; name: string }[]
+  locations?: { $id: string; name: string }[]
   onTemplatesList?: () => Promise<unknown> | unknown
 }) {
-  const lookups = lookupDocuments()
+  const lookups = lookupDocuments({ locations: options.locations })
   const existingTemplates = options.existingTemplates ?? []
 
   return vi.fn(async (url: string, init?: RequestInit) => {
@@ -136,7 +190,12 @@ function makeFetchMock(options: {
   })
 }
 
-describe('seedTemplates idempotency', () => {
+async function loadSeedTemplates() {
+  const { seedTemplates } = await import('@/scripts/seed-templates')
+  return seedTemplates
+}
+
+describe('seedTemplates', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
     vi.unstubAllGlobals()
@@ -152,7 +211,7 @@ describe('seedTemplates idempotency', () => {
     vi.stubGlobal('fetch', fetchMock)
     mockConsole()
 
-    const { seedTemplates } = await import('@/scripts/seed-templates')
+    const seedTemplates = await loadSeedTemplates()
 
     await expect(seedTemplates()).rejects.toThrow('transient list failure')
     expect(createdTemplateNames(fetchMock)).toEqual([])
@@ -166,51 +225,75 @@ describe('seedTemplates idempotency', () => {
     vi.stubGlobal('fetch', fetchMock)
     mockConsole()
 
-    const { seedTemplates } = await import('@/scripts/seed-templates')
+    const seedTemplates = await loadSeedTemplates()
 
     await expect(seedTemplates()).rejects.toThrow('list failed')
     expect(createdTemplateNames(fetchMock)).toEqual([])
   })
 
-  it('does not re-create template names that appear after the first 100 list results', async () => {
-    stubRequiredEnv()
-    const existingTemplates = [
-      ...Array.from({ length: APPWRITE_PAGE_CAP }, (_, i) => ({
-        $id: `other-${i}`,
-        name: `Other ${i}`,
-      })),
-      { $id: 'existing-milk', name: 'Milk' },
-    ]
-    const fetchMock = makeFetchMock({ existingTemplates })
-    vi.stubGlobal('fetch', fetchMock)
-    mockConsole()
-
-    const { seedTemplates } = await import('@/scripts/seed-templates')
-    await seedTemplates()
-
-    const created = createdTemplateNames(fetchMock)
-    expect(created).not.toContain('Milk')
-    expect(created.length).toBeGreaterThan(0)
-  })
-
-  it('skips already-seeded names and creates only the missing templates', async () => {
+  it('skips seeding entirely, without map fetches, when any template already exists', async () => {
     stubRequiredEnv()
     const fetchMock = makeFetchMock({
-      existingTemplates: [
-        { $id: 'existing-milk', name: 'Milk' },
-        { $id: 'existing-eggs', name: 'Eggs' },
-      ],
+      existingTemplates: [{ $id: 'existing-family-recipe', name: 'Family Recipe' }],
     })
     vi.stubGlobal('fetch', fetchMock)
     mockConsole()
 
-    const { seedTemplates } = await import('@/scripts/seed-templates')
+    const seedTemplates = await loadSeedTemplates()
     await seedTemplates()
 
-    const created = createdTemplateNames(fetchMock)
-    expect(created).not.toContain('Milk')
-    expect(created).not.toContain('Eggs')
-    expect(created).toContain('Steak')
-    expect(created).toHaveLength(28)
+    expect(createdTemplateNames(fetchMock)).toEqual([])
+    expect(lookupListCalls(fetchMock)).toHaveLength(0)
+    expect(consoleLogText()).toContain('Skipped - templates already exist')
+  })
+
+  it('skips templates whose location lookup misses and never posts null relations', async () => {
+    stubRequiredEnv()
+    const fetchMock = makeFetchMock({
+      locations: [{ $id: 'loc-fridge', name: 'Fridge' }],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    mockConsole()
+
+    const seedTemplates = await loadSeedTemplates()
+    await seedTemplates()
+
+    expect(createdTemplateNames(fetchMock)).toEqual(FRIDGE_ONLY_TEMPLATE_ORDER)
+    const warnings = consoleWarnText()
+    expect(warnings).toContain('Ground Beef')
+    expect(warnings).toContain('Frozen Vegetables')
+    for (const body of createdTemplateBodies(fetchMock)) {
+      expect(body.data?.categoryId).not.toBeNull()
+      expect(body.data?.defaultStorageLocationId).not.toBeNull()
+    }
+  })
+
+  it('warns instead of claiming existing templates when every lookup misses on an empty collection', async () => {
+    stubRequiredEnv()
+    const fetchMock = makeFetchMock({
+      locations: [{ $id: 'loc-cellar', name: 'Cellar' }],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    mockConsole()
+
+    const seedTemplates = await loadSeedTemplates()
+    await seedTemplates()
+
+    expect(createdTemplateNames(fetchMock)).toEqual([])
+    expect(consoleLogText()).not.toContain('Skipped - templates already exist')
+    expect(vi.mocked(console.warn).mock.calls.length).toBeGreaterThan(0)
+  })
+
+  it('seeds all twelve starter templates in array order against an empty collection', async () => {
+    stubRequiredEnv()
+    const fetchMock = makeFetchMock({})
+    vi.stubGlobal('fetch', fetchMock)
+    mockConsole()
+
+    const seedTemplates = await loadSeedTemplates()
+    await seedTemplates()
+
+    expect(createdTemplateNames(fetchMock)).toEqual(STARTER_TEMPLATE_ORDER)
+    expect(consoleLogText()).toContain('Seeded 12 templates')
   })
 })

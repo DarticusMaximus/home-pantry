@@ -1,8 +1,17 @@
+import { existsSync } from 'node:fs'
+import { config } from 'dotenv'
+
 export const APPWRITE_SCRIPT_ENV_VARS = [
   'NEXT_PUBLIC_APPWRITE_ENDPOINT',
   'NEXT_PUBLIC_APPWRITE_PROJECT_ID',
   'APPWRITE_API_KEY',
 ] as const
+
+export function loadLocalEnv(): void {
+  if (existsSync('.env.local')) {
+    config({ path: '.env.local', quiet: true })
+  }
+}
 
 export function missingEnvMessage(
   env: Readonly<Record<string, string | undefined>>,

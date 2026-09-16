@@ -122,3 +122,31 @@ services:
 ```
 
 The HTTPS rules from section 7 apply unchanged: the app sets HSTS and the PWA's service worker needs a trustworthy origin. Put the container behind a reverse proxy that terminates TLS — reuse the same Caddy/nginx setup — and only expose the proxy.
+
+## 9. Pre-flight a release image
+
+Before pointing a release image at real infrastructure, smoke it against an Appwrite project you control. The tool starts the container, waits for the app to answer `/login`, verifies the image provisioned the expected database, collections, attributes, indexes, and seed data, scans the container logs for errors, then restarts the container and re-runs every check to confirm a second boot duplicates nothing. Each assertion prints one pass/fail line; the exit code is 0 only when all of them pass.
+
+Bring your own Appwrite — the same three variables as section 2:
+
+- `NEXT_PUBLIC_APPWRITE_ENDPOINT`
+- `NEXT_PUBLIC_APPWRITE_PROJECT_ID`
+- `APPWRITE_API_KEY` — a `databases`-scoped key (read + write)
+
+Supply them at runtime from your process environment or `.env.local` (gitignored). If any is missing, the tool exits immediately, naming exactly what is absent. The API key is masked in all output.
+
+**Use a scratch/empty Appwrite project.** The image provisions its starter data onto whatever project it sees — the same behavior as a real deployment (section 8) — so do not smoke against a project whose data you care about.
+
+Smoke the local build (the tool builds and tags `home-pantry:smoke`, serves it on port 3100, `--port` to override):
+
+```bash
+pnpm smoke:image
+```
+
+Or a published ref:
+
+```bash
+pnpm smoke:image --image ghcr.io/darticusmaximus/home-pantry:X.Y.Z
+```
+
+The smoke never deletes anything: it issues no DELETE calls to Appwrite, and its only cleanup is the docker container it started.
